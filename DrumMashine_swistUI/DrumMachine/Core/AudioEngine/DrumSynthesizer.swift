@@ -1022,6 +1022,22 @@ nonisolated enum DrumSynthesizer {
             applyADSR(&buffer, preset: preset, sampleRate: sampleRate)
             return buffer
         }
+        if case .bundled(let fileName) = preset.source {
+            guard let url = BundledSamples.url(for: fileName) else { return [0] }
+            var raw = SampleImporter.render(
+                fileName: url.lastPathComponent,
+                sampleRoot: url.deletingLastPathComponent(),
+                sampleRate: sampleRate,
+                pitch: preset.pitch
+            )
+            if raw.isEmpty { raw = [0] }
+            var buffer = finalize(raw, sampleRate: sampleRate)
+            // Bundled kit pieces keep their level relative to each other (ghost note is quiet).
+            let level = min(max(preset.volume, 0), 1)
+            if level < 1 { for i in buffer.indices { buffer[i] *= level } }
+            applyADSR(&buffer, preset: preset, sampleRate: sampleRate)
+            return buffer
+        }
         var buffer = renderedVoice(preset, sampleRate: sampleRate)
         applyADSR(&buffer, preset: preset, sampleRate: sampleRate)
         return buffer

@@ -424,7 +424,7 @@ struct DrumMashine_swistUITests {
 
     @Test func libraryCoversSixtyPresetsAndEightDefaults() {
         let library = SoundLibraryManager.shared.availableSounds
-        #expect(library.count == 111)
+        #expect(library.count == 111 + AcousticKit.pieces.count)
         let defaults = (0..<8).map { SoundLibraryManager.shared.defaultPreset(forTrackIndex: $0) }
         #expect(defaults.count == 8)
         #expect(defaults.allSatisfy { !$0.name.isEmpty })

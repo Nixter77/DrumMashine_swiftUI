@@ -192,3 +192,7 @@ Impact: 60% - Premium look & feel
 **Последнее обновление:** 18 февраля 2026  
 **Версия документации:** 1.0  
 **Статус проекта:** Code Review Complete, Ready for Improvements
+
+## Acoustic Kit samples
+
+The "Real ..." sounds (library filter ACOUSTIC) are edited samples from "Big Rusty Drums" by Karoryfer Samples, CC0 1.0 (public domain): https://github.com/sfzinstruments/karoryfer.big-rusty-drums. Details: DrumMashine_swistUI/Resources/AcousticKit/AcousticKit_CREDITS.txt

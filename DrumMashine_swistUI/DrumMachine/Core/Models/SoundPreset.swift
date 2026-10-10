@@ -119,6 +119,8 @@ nonisolated enum FactoryStyle: String, Codable, CaseIterable, Sendable, Equatabl
 nonisolated enum SoundSource: Codable, Equatable, Sendable, Hashable {
     case synth
     case sample(fileName: String, originalName: String)
+    /// A recorded sample shipped inside the app bundle (Acoustic Kit).
+    case bundled(fileName: String)
 }
 
 // MARK: - Core/Models

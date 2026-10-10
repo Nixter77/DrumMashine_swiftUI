@@ -7,10 +7,10 @@ import Testing
 struct FactoryLibraryTests {
     @Test func factoryLibraryHasOneHundredElevenDistinctPresets() {
         let library = SoundLibraryManager.shared.availableSounds
-        #expect(library.count == 111)
-        #expect(Set(library.map(\.filename)).count == 111)
+        #expect(library.count == 111 + AcousticKit.pieces.count)
+        #expect(Set(library.map(\.filename)).count == 111 + AcousticKit.pieces.count)
         #expect(library.filter { $0.style == .legacy }.count == 60)
-        #expect(library.filter { $0.style != .legacy }.count == 51)
+        #expect(library.filter { $0.style != .legacy }.count == 51 + AcousticKit.pieces.count)
         let added = Set(FactoryPresets.additional().map(\.filename))
         #expect(added.count == 51)
         #expect(added.isSubset(of: Set(library.map(\.filename))))

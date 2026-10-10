@@ -103,6 +103,7 @@ class SoundLibraryManager {
             make("Impact",      "fx_impact",   .fx,         attack: 0.001, decay: 0.25, sustain: 0.0, release: 0.10, pitch: -5),
         ]
         all += FactoryPresets.additional()
+        all += AcousticKit.presets()
         
         availableSounds = all
         
