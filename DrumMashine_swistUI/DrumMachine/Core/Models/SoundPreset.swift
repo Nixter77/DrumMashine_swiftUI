@@ -155,6 +155,8 @@ nonisolated struct SoundPreset: Identifiable, Codable, Sendable, Equatable {
     var source: SoundSource = .synth
     /// Nil on a user preset that was not copied from the factory list.
     var style: FactoryStyle? = nil
+    /// Tone filter, -1 (dark lowpass) ... 0 (off) ... +1 (thin highpass). Nil is off.
+    var toneFilter: Float? = nil
 
     nonisolated enum Origin: String, Codable, Sendable, Equatable {
         case factory
@@ -225,6 +227,7 @@ extension SoundPreset {
         } else {
             style = nil
         }
+        toneFilter = try container.decodeIfPresent(Float.self, forKey: .toneFilter)
     }
 
     /// Stored `voice`, or the same filename guess the synthesizer used before D-0.
@@ -267,6 +270,8 @@ extension SoundPreset {
         hasher.combine(resolvedVoice.rawValue)
         hasher.combine(synth)
         hasher.combine(source)
+        hasher.combine(toneFilter)
+        hasher.combine(volume)
         return hasher.finalize()
     }
 
@@ -287,6 +292,8 @@ extension SoundPreset {
         copy.sustain = source.sustain
         copy.release = source.release
         copy.chokeGroup = source.chokeGroup
+        copy.toneFilter = source.toneFilter
+        copy.synth = source.synth
         return copy
     }
 }

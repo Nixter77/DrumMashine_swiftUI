@@ -17,9 +17,7 @@ struct PadADSREditorView: View {
                     .frame(width: 10, height: 10)
                     .shadow(color: padColor.opacity(0.6), radius: 4)
                 
-                Text(preset.name + " — ENVELOPE")
-                    .font(.system(.caption, design: .monospaced).weight(.bold))
-                    .foregroundColor(AppTheme.textPrimary)
+                soundPicker
                 
                 Spacer()
                 
@@ -31,6 +29,7 @@ struct PadADSREditorView: View {
                 .buttonStyle(.plain)
             }
             
+            if isSynth {
             // ADSR Visualizer
             ADSRCurveView(
                 attack: Double(preset.attack),
@@ -89,6 +88,8 @@ struct PadADSREditorView: View {
                 )
             }
             
+            }
+
             Divider()
                 .overlay(Color.gray.opacity(0.2))
 
@@ -97,42 +98,7 @@ struct PadADSREditorView: View {
             Divider()
                 .overlay(Color.gray.opacity(0.2))
             
-            // Pitch & Volume row
             HStack(spacing: 16) {
-                // Pitch
-                VStack(spacing: 4) {
-                    Text("PITCH")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(AppTheme.textTertiary)
-                    
-                    HStack(spacing: 6) {
-                        Button(action: { preset.pitch = max(-24, preset.pitch - 1) }) {
-                            Image(systemName: "minus")
-                                .font(.caption2.weight(.bold))
-                                .foregroundColor(AppTheme.textPrimary)
-                                .frame(width: 22, height: 22)
-                                .background(AppTheme.surfaceElevated)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        
-                        Text("\(Int(preset.pitch > 0 ? preset.pitch : preset.pitch)) st")
-                            .font(.system(.caption, design: .monospaced).weight(.bold))
-                            .foregroundColor(preset.pitch != 0 ? padColor : AppTheme.textSecondary)
-                            .frame(minWidth: 40)
-                        
-                        Button(action: { preset.pitch = min(24, preset.pitch + 1) }) {
-                            Image(systemName: "plus")
-                                .font(.caption2.weight(.bold))
-                                .foregroundColor(AppTheme.textPrimary)
-                                .frame(width: 22, height: 22)
-                                .background(AppTheme.surfaceElevated)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                
                 Spacer()
                 
                 Button(action: {
@@ -177,47 +143,47 @@ struct PadADSREditorView: View {
         .glassPanel()
     }
 
-    /// Three or four knobs for this voice. The rest of the generator stays at its constants.
+    private var isSynth: Bool { preset.source == .synth }
+
+    /// Pick another sound for this track without leaving the editor. Hats list both closed and open.
+    private var soundPicker: some View {
+        Menu {
+            ForEach(SoundLibraryManager.shared.presets(forTrackVoice: preset.resolvedVoice)) { option in
+                Button(option.name + (option.style == .acoustic ? "  · acoustic" : "")) {
+                    var copy = option
+                    copy.basedOn = option.id
+                    preset = copy
+                }
+            }
+        } label: {
+            Text(preset.name + "  ▾")
+                .font(.system(.caption, design: .monospaced).weight(.bold))
+                .foregroundColor(AppTheme.textPrimary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityIdentifier("soundEditor.picker")
+    }
+
+    /// Tune, decay or length, voice knobs, tone, level. Same list for every track (see SoundControls).
     @ViewBuilder
     private var voiceControls: some View {
         VStack(spacing: 10) {
-            switch preset.resolvedVoice {
-            case .kick:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.kick?.startHz ?? 150 }, set: { value in editKick { $0.startHz = value } }), range: 40...400, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.kick?.click ?? 0.5 }, set: { value in editKick { $0.click = value } }), range: 0...1, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.kick?.noise ?? 0 }, set: { value in editKick { $0.noise = value } }), range: 0...1, unit: "")
-            case .snare:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.snare?.tone1Hz ?? 180 }, set: { value in editSnare { $0.tone1Hz = value } }), range: 80...800, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.snare?.tone2Hz ?? 330 }, set: { value in editSnare { $0.tone2Hz = value } }), range: 100...2000, unit: "Hz")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.snare?.noiseLevel ?? 0.8 }, set: { value in editSnare { $0.noiseLevel = value } }), range: 0...1.5, unit: "")
-            case .closedHat, .openHat:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.hat?.bandHz ?? 10_000 }, set: { value in editHat { $0.bandHz = value } }), range: 2_000...14_000, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.hat?.bandQ ?? 0.8 }, set: { value in editHat { $0.bandQ = value } }), range: 0.2...4, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.hat?.noiseMix ?? 0 }, set: { value in editHat { $0.noiseMix = value } }), range: 0...1, unit: "")
-            case .clap:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.clap?.hpHz ?? 800 }, set: { value in editClap { $0.hpHz = value } }), range: 200...4000, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { Double(preset.synth?.clap?.bursts ?? 3) }, set: { value in editClap { $0.bursts = Int(value.rounded()) } }), range: 1...6, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.clap?.tailLevel ?? 0.4 }, set: { value in editClap { $0.tailLevel = value } }), range: 0...1, unit: "")
-            case .tom:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.tom?.startHz ?? 200 }, set: { value in editTom { $0.startHz = value } }), range: 60...500, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.tom?.stickNoise ?? 0 }, set: { value in editTom { $0.stickNoise = value } }), range: 0...1, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.tom?.endHz ?? 80 }, set: { value in editTom { $0.endHz = value } }), range: 40...300, unit: "Hz")
-            case .ride:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.ride?.pingHz ?? 5000 }, set: { value in editRide { $0.pingHz = value } }), range: 1_000...8_000, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.ride?.pingLevel ?? 0.6 }, set: { value in editRide { $0.pingLevel = value } }), range: 0...1, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.ride?.sizzleLevel ?? 0.4 }, set: { value in editRide { $0.sizzleLevel = value } }), range: 0...1, unit: "")
-            case .crash:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.crash?.carrierHz ?? 300 }, set: { value in editCrash { $0.carrierHz = value } }), range: 80...800, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.crash?.index ?? 5 }, set: { value in editCrash { $0.index = value } }), range: 0...12, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.crash?.fmMix ?? 0.3 }, set: { value in editCrash { $0.fmMix = value } }), range: 0...1, unit: "")
-            case .perc:
-                toneSlider("Тон", value: Binding(get: { preset.synth?.perc?.carrierHz ?? 800 }, set: { value in editPerc { $0.carrierHz = value } }), range: 80...4000, unit: "Hz")
-                toneSlider("Щелчок", value: Binding(get: { preset.synth?.perc?.index ?? 3 }, set: { value in editPerc { $0.index = value } }), range: 0...8, unit: "")
-                toneSlider("Шум", value: Binding(get: { preset.synth?.perc?.bandHz ?? 6000 }, set: { value in editPerc { $0.bandHz = value; if $0.mode == nil { $0.mode = .noise } } }), range: 200...12_000, unit: "Hz")
-            case .fx:
-                EmptyView()
+            ForEach(SoundControls.controls(for: preset)) { control in
+                toneSlider(
+                    control.title,
+                    value: Binding(get: { control.get(preset) }, set: { value in
+                        var copy = preset
+                        control.set(&copy, value)
+                        preset = copy
+                    }),
+                    range: control.range,
+                    unit: control.unit
+                )
             }
-            toneSlider("Lo-fi", value: Binding(get: { lofiAmount }, set: { setLofi($0) }), range: 0...1, unit: "")
+            if isSynth {
+                toneSlider("Lo-fi", value: Binding(get: { lofiAmount }, set: { setLofi($0) }), range: 0...1, unit: "")
+            }
         }
     }
 

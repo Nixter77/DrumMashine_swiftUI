@@ -67,3 +67,17 @@ nonisolated enum AcousticKit {
         }
     }
 }
+
+extension SoundLibraryManager {
+    /// Library tab contents: one voice, optionally one style (nil = all styles).
+    func presets(for voice: SoundPreset.VoiceKind, style: FactoryStyle?) -> [SoundPreset] {
+        availableSounds.filter { $0.resolvedVoice == voice && (style == nil || $0.style == style) }
+    }
+
+    /// Sounds offered by a track's sound picker: its own voice family (both hats on the hat track).
+    func presets(forTrackVoice voice: SoundPreset.VoiceKind) -> [SoundPreset] {
+        let family: Set<SoundPreset.VoiceKind> = (voice == .closedHat || voice == .openHat)
+            ? [.closedHat, .openHat] : [voice]
+        return availableSounds.filter { family.contains($0.resolvedVoice) }
+    }
+}

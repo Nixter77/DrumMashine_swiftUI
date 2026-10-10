@@ -149,7 +149,12 @@ struct SoundLibraryView: View {
     
     @ViewBuilder
     private var libraryTabs: some View {
-        let voices = HStack(spacing: 4) {
+        // Two rows of five. A hidden horizontal scroller clipped every tab after SNARE
+        // on a mouse (no sideways scroll), so hats, toms and cymbals could not be reached.
+        let voices = LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(minimum: 34), spacing: 4), count: 5),
+            spacing: 4
+        ) {
             ForEach(SoundPreset.VoiceKind.allCases, id: \.self) { voice in
                 LibraryTabButton(
                     title: tabTitle(voice),
@@ -190,25 +195,11 @@ struct SoundLibraryView: View {
                 show(.patterns)
             }
         }
-        HStack(spacing: 4) {
-            if snapshotLayout {
-                voices
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .trailing)
-                    .clipped()
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    voices
-                }
-                .frame(minWidth: 0, maxWidth: .infinity)
-                .clipped()
-                // Keep this identifier on the scroller only. On the outer
-                // stack it replaces library.page.patterns on the mode buttons.
+        VStack(alignment: .leading, spacing: 6) {
+            voices
                 .accessibilityIdentifier("library.tabs")
-            }
             modes
                 .fixedSize(horizontal: true, vertical: false)
-                .zIndex(1)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -459,9 +450,7 @@ struct SoundLibraryView: View {
     private func listedPresets() -> [SoundPreset] {
         switch page {
         case .voice(let voice):
-            return library.availableSounds.filter { preset in
-                preset.resolvedVoice == voice && styleMatches(preset) && nameMatches(preset.name)
-            }
+            return library.presets(for: voice, style: styleFilter).filter { nameMatches($0.name) }
         case .user:
             return UserPresetStore.shared.presets.filter { nameMatches($0.name) }
         case .kits, .patterns:
@@ -594,7 +583,7 @@ struct SoundLibraryView: View {
     }
 
     private func voiceCount(_ voice: SoundPreset.VoiceKind) -> Int {
-        library.availableSounds.filter { $0.resolvedVoice == voice && styleMatches($0) }.count
+        library.presets(for: voice, style: styleFilter).count
     }
 
     private func styleMatches(_ preset: SoundPreset) -> Bool {
@@ -650,6 +639,8 @@ private struct LibraryTabButton: View {
                 Text(title)
                     .font(.system(.caption2, design: .monospaced).weight(.bold))
                     .foregroundColor(isSelected ? color : AppTheme.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 Text("\(count)")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
                     .foregroundColor(isSelected ? AppTheme.onAccent : AppTheme.textTertiary)
@@ -657,8 +648,9 @@ private struct LibraryTabButton: View {
                     .padding(.vertical, 1)
                     .background(Capsule().fill(isSelected ? color : AppTheme.hairline.opacity(0.08)))
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 4)
             .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? color.opacity(0.12) : Color.clear)

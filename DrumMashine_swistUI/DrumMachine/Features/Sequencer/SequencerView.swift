@@ -222,10 +222,22 @@ struct SequencerRowView: View {
                     .frame(width: 7, height: 7)
                     .shadow(color: padColor.opacity(0.6), radius: 2)
                 
-                Text(track.soundPreset.name)
-                    .font(.system(.caption, design: .monospaced).weight(.semibold))
-                    .foregroundColor(track.isMuted ? AppTheme.textTertiary : AppTheme.textPrimary)
-                    .lineLimit(1)
+                Button {
+                    SoundEditorRouter.shared.trackIndex = trackIndex
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(track.soundPreset.name)
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundColor(track.isMuted ? AppTheme.textTertiary : AppTheme.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 8))
+                            .foregroundColor(padColor.opacity(0.7))
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Edit sound")
+                .accessibilityIdentifier("sequencer.editSound.\(trackIndex)")
             }
             .frame(width: AppLayout.sequencerTrackWidth, alignment: .leading)
             

@@ -20,7 +20,12 @@ struct PadsGridView: View {
         DrumPad(id: UUID(), name: "PERC",  iconName: "diamond.fill",           colorHex: "FF375F", soundPresetId: UUID())
     ]
     
-    @State private var editingPadIndex: Int? = nil
+    @ObservedObject private var router = SoundEditorRouter.shared
+    /// Pads (long press) and sequencer track names (click) open the same editor.
+    private var editingPadIndex: Int? {
+        get { router.trackIndex }
+        nonmutating set { router.trackIndex = newValue }
+    }
     @State private var soundReloadTasks: [Int: Task<Void, Never>] = [:]
     
     var body: some View {

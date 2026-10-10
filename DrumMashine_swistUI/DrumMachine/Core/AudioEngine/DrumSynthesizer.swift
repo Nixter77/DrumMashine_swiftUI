@@ -140,6 +140,18 @@ nonisolated enum DrumSynthesizer {
             section(cutoff: cutoff, sampleRate: sampleRate, q: q, kind: .highpass)
         }
 
+        static func lowpass(cutoff: Double, sampleRate: Double, q: Double = 0.707) -> Biquad {
+            var hp = section(cutoff: cutoff, sampleRate: sampleRate, q: q, kind: .highpass)
+            let w0 = 2 * Double.pi * min(max(20, cutoff), max(1, sampleRate * 0.45)) / sampleRate
+            let cosine = cos(w0)
+            let alpha = sin(w0) / (2 * max(0.1, q))
+            let a0 = 1 + alpha
+            hp.b0 = (1 - cosine) / 2 / a0
+            hp.b1 = (1 - cosine) / a0
+            hp.b2 = (1 - cosine) / 2 / a0
+            return hp
+        }
+
         static func bandpass(cutoff: Double, sampleRate: Double, q: Double = 1) -> Biquad {
             section(cutoff: cutoff, sampleRate: sampleRate, q: q, kind: .bandpass)
         }
@@ -525,8 +537,10 @@ nonisolated enum DrumSynthesizer {
         var buffer = [Float](repeating: 0, count: samples)
         
         // Bandpass filter for clap character (approx 1kHz - 2kHz)
-        var hpf = OnePoleHPF(cutoff: 800.0, sampleRate: sampleRate)
-        var lpf = OnePoleLPF(cutoff: 2500.0, sampleRate: sampleRate)
+        // Tune shifts the clap's band (noise has no pitch of its own). 0 st leaves it as before.
+        let clapShift = pow(2.0, pitchMod / 12.0)
+        var hpf = OnePoleHPF(cutoff: 800.0 * clapShift, sampleRate: sampleRate)
+        var lpf = OnePoleLPF(cutoff: 2500.0 * clapShift, sampleRate: sampleRate)
         
         // Burst definition: time in seconds
         let bursts = [0.000, 0.012, 0.024]
@@ -583,13 +597,13 @@ nonisolated enum DrumSynthesizer {
         pitchMod: Double,
         params: SynthParams.Clap
     ) -> [Float] {
-        _ = pitchMod
+        let clapShift = pow(2.0, pitchMod / 12.0)
         let tau = max(0.005, decay * 0.5)
         let duration = decayDuration(tau: tau, minimum: 0.3)
         let count = Int(sampleRate * duration)
         var buffer = [Float](repeating: 0, count: count)
-        var hpf = OnePoleHPF(cutoff: params.hpHz ?? 800.0, sampleRate: sampleRate)
-        var lpf = OnePoleLPF(cutoff: params.lpHz ?? 2500.0, sampleRate: sampleRate)
+        var hpf = OnePoleHPF(cutoff: (params.hpHz ?? 800.0) * clapShift, sampleRate: sampleRate)
+        var lpf = OnePoleLPF(cutoff: (params.lpHz ?? 2500.0) * clapShift, sampleRate: sampleRate)
         let burstCount = max(1, params.bursts ?? 3)
         let spacing = params.spacing ?? 0.012
         let bursts = (0..<burstCount).map { Double($0) * spacing }
@@ -858,7 +872,7 @@ nonisolated enum DrumSynthesizer {
             let bursts = max(1, params.bursts ?? 1)
             let spacing = params.spacing ?? 0.015
             var band = Biquad.bandpass(
-                cutoff: params.bandHz ?? 6000,
+                cutoff: (params.bandHz ?? 6000) * pitchFactor,
                 sampleRate: sampleRate,
                 q: params.bandQ ?? 1.5
             )
@@ -1002,6 +1016,31 @@ nonisolated enum DrumSynthesizer {
         return finish(raw, sampleRate: sampleRate, lofi: nil)
     }
 
+    /// Tone filter and level, run on the render thread (never the audio thread).
+    /// Peak stays at or below the 0.5 the buffer already had.
+    static func applyToneAndLevel(_ buffer: inout [Float], preset: SoundPreset, sampleRate: Double) {
+        guard !buffer.isEmpty, sampleRate > 0 else { return }
+        let tone = Double(min(max(preset.toneFilter ?? 0, -1), 1))
+        if abs(tone) > 0.01 {
+            let before = buffer.reduce(Float(0)) { max($0, abs($1)) }
+            var filter = tone < 0
+                ? Biquad.lowpass(cutoff: 18_000 * pow(0.02, -tone), sampleRate: sampleRate)
+                : Biquad.highpass(cutoff: 30 * pow(100, tone), sampleRate: sampleRate)
+            for i in buffer.indices {
+                buffer[i] = Float(filter.process(Double(buffer[i])))
+            }
+            let after = buffer.reduce(Float(0)) { max($0, abs($1)) }
+            if after > 0.0001, before > 0 {
+                var scale = before / after
+                vDSP_vsmul(buffer, 1, &scale, &buffer, 1, vDSP_Length(buffer.count))
+            }
+        }
+        var level = min(max(preset.volume, 0), 1)
+        if level < 1 {
+            vDSP_vsmul(buffer, 1, &level, &buffer, 1, vDSP_Length(buffer.count))
+        }
+    }
+
     /// One entry point for every preset the library and the engine play.
     /// Generators own the drum decay. ADSR then shapes attack, the drop to sustain, and the tail.
     static func samples(
@@ -1019,6 +1058,7 @@ nonisolated enum DrumSynthesizer {
             )
             if raw.isEmpty { raw = [0] }
             var buffer = finalize(raw, sampleRate: sampleRate)
+            applyToneAndLevel(&buffer, preset: preset, sampleRate: sampleRate)
             applyADSR(&buffer, preset: preset, sampleRate: sampleRate)
             return buffer
         }
@@ -1032,13 +1072,12 @@ nonisolated enum DrumSynthesizer {
             )
             if raw.isEmpty { raw = [0] }
             var buffer = finalize(raw, sampleRate: sampleRate)
-            // Bundled kit pieces keep their level relative to each other (ghost note is quiet).
-            let level = min(max(preset.volume, 0), 1)
-            if level < 1 { for i in buffer.indices { buffer[i] *= level } }
+            applyToneAndLevel(&buffer, preset: preset, sampleRate: sampleRate)
             applyADSR(&buffer, preset: preset, sampleRate: sampleRate)
             return buffer
         }
         var buffer = renderedVoice(preset, sampleRate: sampleRate)
+        applyToneAndLevel(&buffer, preset: preset, sampleRate: sampleRate)
         applyADSR(&buffer, preset: preset, sampleRate: sampleRate)
         return buffer
     }
