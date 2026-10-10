@@ -1,0 +1,14 @@
+xcuserdata/
+*.xcuserstate
+.DS_Store
+firebase-debug.log
+DerivedData/
+
+# User recordings copied into Application Support. Do not commit them.
+*.wav
+*.aiff
+*.aif
+*.caf
+
+# macOS AppleDouble files
+._*
