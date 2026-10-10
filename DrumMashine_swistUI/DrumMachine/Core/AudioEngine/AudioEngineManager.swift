@@ -374,15 +374,63 @@ class AudioEngineManager {
         ensureAttached(eqNode)
         ensureAttached(limiterNode)
         ensureAttached(compressorNode)
-        engine.connect(voiceEngine.sourceNode, to: distortionNode, format: format)
-        engine.connect(distortionNode, to: delayNode, format: format)
-        engine.connect(delayNode, to: reverbNode, format: format)
-        engine.connect(reverbNode, to: eqNode, format: format)
-        engine.connect(eqNode, to: compressorNode, format: format)
-        engine.connect(compressorNode, to: limiterNode, format: format)
-        engine.connect(limiterNode, to: engine.mainMixerNode, format: format)
+        let chain = routedNodes(EffectsChain.sanitized(effectsChain.order))
+        for (from, to) in zip(chain, chain.dropFirst()) {
+            engine.connect(from, to: to, format: format)
+        }
+        connectedOrder = EffectsChain.sanitized(effectsChain.order)
         engine.mainMixerNode.outputVolume = masterVolume
         limiterNode.bypass = !limiterEnabled
+    }
+
+    /// Order the graph is wired in now. Nil before the first connect.
+    private var connectedOrder: [EffectsChain.EffectSlot]?
+
+    func node(for slot: EffectsChain.EffectSlot) -> AVAudioNode {
+        switch slot {
+        case .distortion: return distortionNode
+        case .delay: return delayNode
+        case .reverb: return reverbNode
+        case .eq: return eqNode
+        case .compressor: return compressorNode
+        }
+    }
+
+    /// voices -> effects in `order` -> limiter -> main mixer.
+    func routedNodes(_ order: [EffectsChain.EffectSlot]) -> [AVAudioNode] {
+        [voiceEngine.sourceNode] + order.map(node(for:)) + [limiterNode, engine.mainMixerNode]
+    }
+
+    /// Nodes actually connected now, following the graph from the voice source.
+    func connectedChainForTesting() -> [AVAudioNode] {
+        var result: [AVAudioNode] = [voiceEngine.sourceNode]
+        var current: AVAudioNode = voiceEngine.sourceNode
+        while result.count < 10,
+              let next = engine.outputConnectionPoints(for: current, outputBus: 0).first?.node {
+            result.append(next)
+            if next === engine.mainMixerNode { break }
+            current = next
+        }
+        return result
+    }
+
+    /// Rewires the effect order on the main actor. The master is muted for the few
+    /// milliseconds of reconnection so the switch does not click; the render thread is never touched.
+    private func applyRoutingIfNeeded() {
+        let order = EffectsChain.sanitized(effectsChain.order)
+        guard let connectedOrder, connectedOrder != order, let format = processingFormat else { return }
+        let mixer = engine.mainMixerNode
+        let volume = mixer.outputVolume
+        mixer.outputVolume = 0
+        for slot in connectedOrder { disconnectOutputIfNeeded(node(for: slot)) }
+        disconnectOutputIfNeeded(voiceEngine.sourceNode)
+        disconnectOutputIfNeeded(limiterNode)
+        let chain = routedNodes(order)
+        for (from, to) in zip(chain, chain.dropFirst()) {
+            engine.connect(from, to: to, format: format)
+        }
+        self.connectedOrder = order
+        mixer.outputVolume = volume
     }
 
     private func disconnectVoiceChain() {
@@ -652,6 +700,7 @@ class AudioEngineManager {
 
     func updateEffects() {
         let chain = effectsChain
+        applyRoutingIfNeeded()
 
         applyReverbRoom(chain.reverb.room)
         reverbNode.bypass = !chain.reverb.isOn

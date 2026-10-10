@@ -5,6 +5,8 @@ struct DrumPadView: View {
     var padIndex: Int
     var onTap: (Float) -> Void
     var onLongPress: (() -> Void)? = nil
+    /// Sound menu shown from the ≡ icon and the right-click menu.
+    var soundMenu: (() -> AnyView)? = nil
     
     @State private var isPressed: Bool = false
     @State private var rippleScale: CGFloat = 0
@@ -91,7 +93,22 @@ struct DrumPadView: View {
                     .foregroundStyle(.white)
                 
                 // ADSR indicator (small dot if customized)
-                if onLongPress != nil {
+                if let soundMenu {
+                    Menu {
+                        soundMenu()
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 9))
+                            .foregroundColor(ThemeStore.isLight ? Color.white.opacity(0.85) : padColor.opacity(0.75))
+                            .padding(3)
+                            .contentShape(Rectangle())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Выбрать звук")
+                    .accessibilityIdentifier("pad.soundMenu.\(padIndex)")
+                } else if onLongPress != nil {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 7))
                         .foregroundColor(ThemeStore.isLight ? Color.white.opacity(0.7) : padColor.opacity(0.5))
@@ -134,6 +151,7 @@ struct DrumPadView: View {
                     }
                 }
         )
+        .contextMenu { soundMenu?() }
         // Long press for ADSR editor
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.6)

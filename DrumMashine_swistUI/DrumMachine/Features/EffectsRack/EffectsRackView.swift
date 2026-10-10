@@ -12,6 +12,7 @@ struct EffectsRackView: View {
     @State private var saveDraft = ""
     @State private var renameTarget: EffectScene?
     @State private var renameDraft = ""
+    @State private var routingPresented = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -56,12 +57,17 @@ struct EffectsRackView: View {
     }
 
     private var moduleRow: some View {
+        // Modules follow the signal order chosen in Routing.
         HStack(spacing: 8) {
-            reverbModule
-            delayModule
-            distortModule
-            EQModuleView(edits: edits, showsLayoutForSnapshot: showsLayoutForSnapshot)
-            compressorModule
+            ForEach(EffectsChain.sanitized(audioManager.effectsChain.order)) { slot in
+                switch slot {
+                case .reverb: reverbModule
+                case .delay: delayModule
+                case .distortion: distortModule
+                case .eq: EQModuleView(edits: edits, showsLayoutForSnapshot: showsLayoutForSnapshot)
+                case .compressor: compressorModule
+                }
+            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
@@ -107,6 +113,29 @@ struct EffectsRackView: View {
                 }
                 .fixedSize()
                 .accessibilityIdentifier("effects.scene")
+            }
+
+            if !showsLayoutForSnapshot {
+                Button {
+                    routingPresented = true
+                } label: {
+                    Label("ROUTING", systemImage: "arrow.triangle.branch")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(AppTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Маршрутизация эффектов")
+                .accessibilityIdentifier("effects.routing")
+                .popover(isPresented: $routingPresented, arrowEdge: .bottom) {
+                    EffectRoutingView(
+                        chain: audioManager.effectsChain,
+                        onChange: { mutate in
+                            prepareEdit()
+                            edits.apply { chain, _ in mutate(&chain) }
+                            undoManager?.setActionName("Effect Routing")
+                        }
+                    )
+                }
             }
 
             if let name = edits.labels.scene {

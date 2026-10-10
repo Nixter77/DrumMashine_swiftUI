@@ -74,6 +74,19 @@ extension SoundLibraryManager {
         availableSounds.filter { $0.resolvedVoice == voice && (style == nil || $0.style == style) }
     }
 
+    /// Pad sound menu: synth, bundled acoustic samples, and the user's presets of the track's family.
+    func pickerSections(
+        forTrackVoice voice: SoundPreset.VoiceKind,
+        users: [SoundPreset]
+    ) -> (synth: [SoundPreset], acoustic: [SoundPreset], user: [SoundPreset]) {
+        let family = presets(forTrackVoice: voice)
+        let ids = Set(family.map(\.resolvedVoice))
+        let synth = family.filter { $0.source == .synth }
+        let acoustic = family.filter { if case .bundled = $0.source { return true } else { return false } }
+        let user = users.filter { ids.contains($0.resolvedVoice) }
+        return (synth, acoustic, user)
+    }
+
     /// Sounds offered by a track's sound picker: its own voice family (both hats on the hat track).
     func presets(forTrackVoice voice: SoundPreset.VoiceKind) -> [SoundPreset] {
         let family: Set<SoundPreset.VoiceKind> = (voice == .closedHat || voice == .openHat)

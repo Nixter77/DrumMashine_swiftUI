@@ -43,6 +43,8 @@ struct PadsGridView: View {
                         withAnimation(.spring(response: 0.3)) {
                             editingPadIndex = index
                         }
+                    } soundMenu: {
+                        AnyView(soundMenu(track: index))
                     }
                     .dropDestination(for: URL.self) { urls, _ in
                         guard let url = urls.first, let sequencer else { return false }
@@ -121,6 +123,47 @@ struct PadsGridView: View {
             }
             guard !Task.isCancelled else { return }
             AudioEngineManager.shared.loadSound(preset: preset, forTrack: track)
+        }
+    }
+
+    @ViewBuilder
+    private func soundMenu(track index: Int) -> some View {
+        if let sequencer, sequencer.tracks.indices.contains(index) {
+            let current = sequencer.tracks[index].soundPreset
+            let sections = SoundLibraryManager.shared.pickerSections(
+                forTrackVoice: current.resolvedVoice,
+                users: UserPresetStore.shared.presets
+            )
+            Button("Edit sound…") { editingPadIndex = index }
+            Divider()
+            soundSection("Synth", sections.synth, track: index, current: current, sequencer: sequencer)
+            soundSection("Acoustic", sections.acoustic, track: index, current: current, sequencer: sequencer)
+            soundSection("User", sections.user, track: index, current: current, sequencer: sequencer)
+        }
+    }
+
+    @ViewBuilder
+    private func soundSection(
+        _ title: String,
+        _ presets: [SoundPreset],
+        track: Int,
+        current: SoundPreset,
+        sequencer: SequencerEngine
+    ) -> some View {
+        if !presets.isEmpty {
+            Section(title) {
+                ForEach(presets) { preset in
+                    Button {
+                        sequencer.assign(preset, toTrack: track)
+                    } label: {
+                        if (current.basedOn ?? current.id) == preset.id {
+                            Label(preset.name, systemImage: "checkmark")
+                        } else {
+                            Text(preset.name)
+                        }
+                    }
+                }
+            }
         }
     }
 
