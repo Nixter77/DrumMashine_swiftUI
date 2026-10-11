@@ -97,7 +97,7 @@ nonisolated struct SidechainParams: Equatable {
     }
 }
 
-/// Gain envelope: smooth attack (3 ms) to the dip, short hold (10 ms), cosine release back to 1.
+/// Gain envelope: smooth attack (3 ms) to the dip, short hold (10 ms), smoothstep release back to 1.
 /// A new hit restarts from the current level, so overlapping hits never jump (no click).
 nonisolated struct SidechainEnvelope {
     static let attackSeconds = 0.003
@@ -143,8 +143,9 @@ nonisolated struct SidechainEnvelope {
             counter += 1
             if counter >= holdFrames { phase = 3; counter = 0 }
         case 3:
-            let t = Float(counter) / Float(releaseFrames)
-            level = peak * 0.5 * (1 + cos(Float.pi * min(1, t)))
+            // Smoothstep release (same S-shape as a raised cosine, no trig per sample).
+            let t = min(1, Float(counter) / Float(releaseFrames))
+            level = peak * (1 - t * t * (3 - 2 * t))
             counter += 1
             if counter >= releaseFrames { phase = 0; counter = 0; level = 0 }
         default:

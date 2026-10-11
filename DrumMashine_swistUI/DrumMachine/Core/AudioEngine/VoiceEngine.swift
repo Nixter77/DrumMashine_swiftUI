@@ -309,7 +309,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
                 planPan(frameCount: frameCount)
                 panPlanned = true
             }
-            duckGain = sidechain.enabled ? sidechainEnvelope.next() : 1
+            duckGain = sidechainEnvelope.isIdle ? 1 : sidechainEnvelope.next()
             mix(frame: frame, left: left, right: right)
             blockPeak = max(blockPeak, abs(left[frame]), abs(right[frame]))
             smooth()
@@ -499,7 +499,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
         right: UnsafeMutablePointer<Float>
     ) {
         var gain = smoothGain[track]
-        if duckGain < 1, sidechain.ducks(track: track) { gain *= duckGain }
+        if duckGain < 1, track < 8, (sidechain.mask >> UInt8(track)) & 1 == 1 { gain *= duckGain }
         let f = Float(frame)
         left[frame] += sample * gain * (panL[track] + panStepL[track] * f)
         right[frame] += sample * gain * (panR[track] + panStepR[track] * f)
