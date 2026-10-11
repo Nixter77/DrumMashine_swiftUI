@@ -9,6 +9,8 @@ nonisolated struct EffectsChain: Codable, Sendable, Equatable {
     var compressor = CompressorSettings()
     /// Signal order of the five rack effects. The limiter always stays last.
     var order: [EffectSlot] = EffectSlot.defaultOrder
+    /// Kick-ducks-the-rest, applied inside the voice mixer before every effect.
+    var sidechain = SidechainSettings()
 
     /// Rack effects that can be reordered in the routing view.
     nonisolated enum EffectSlot: String, Codable, CaseIterable, Sendable, Identifiable, Equatable {
@@ -175,6 +177,7 @@ extension EffectsChain {
         eq = try container.decodeIfPresent(EQSettings.self, forKey: .eq) ?? EQSettings()
         compressor = try container.decodeIfPresent(CompressorSettings.self, forKey: .compressor) ?? CompressorSettings()
         // Unknown slot names (newer file) are dropped rather than failing the whole chain.
+        sidechain = try container.decodeIfPresent(SidechainSettings.self, forKey: .sidechain) ?? SidechainSettings()
         let raw = try container.decodeIfPresent([String].self, forKey: .order) ?? []
         order = Self.sanitized(raw.compactMap(EffectSlot.init(rawValue:)))
     }

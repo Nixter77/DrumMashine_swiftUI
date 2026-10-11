@@ -361,6 +361,7 @@ class AudioEngineManager {
         voiceEngine = created
         loadedTracks.removeAll()
         isReady = false
+        created.setSidechain(effectsChain.sidechain)
         for index in 0..<trackVolumes.count {
             created.setTrackGain(track: index, gain: trackVolumes[index], pan: trackPans[index])
         }
@@ -707,6 +708,7 @@ class AudioEngineManager {
 
     func updateEffects() {
         let chain = effectsChain
+        voiceEngine?.setSidechain(chain.sidechain)
         applyRoutingIfNeeded()
 
         applyReverbRoom(chain.reverb.room)

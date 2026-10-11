@@ -59,6 +59,7 @@ struct EffectsRackView: View {
     private var moduleRow: some View {
         // Modules follow the signal order chosen in Routing.
         HStack(spacing: 8) {
+            sidechainModule
             ForEach(EffectsChain.sanitized(audioManager.effectsChain.order)) { slot in
                 switch slot {
                 case .reverb: reverbModule
@@ -350,6 +351,93 @@ struct EffectsRackView: View {
             compKnob("GAIN", tint, get: { Double($0.makeup / 20) }, set: { $0.makeup = Float($1 * 20) },
                      format: { String(format: "+%.1fdB", $0 * 20) })
         }
+    }
+
+    static let trackShortNames = ["KICK", "SNR", "HAT", "CLAP", "TOM", "RIDE", "CRSH", "PERC"]
+
+    /// Pre-FX ducking in the voice mixer. Knobs edit live; source, ducked tracks and presets go through undo.
+    private var sidechainModule: some View {
+        let tint = Color(hex: "FF9F0A")
+        let sc = audioManager.effectsChain.sidechain
+        return EffectModuleView(
+            title: "SIDECHAIN",
+            icon: "arrow.down.to.line",
+            color: tint,
+            isOn: Binding(
+                get: { audioManager.effectsChain.sidechain.isOn },
+                set: { on in editSidechain("Sidechain") { $0.isOn = on } }
+            ),
+            powerIdentifier: "effect.sidechain.power",
+            showsLayoutForSnapshot: showsLayoutForSnapshot,
+            presetIdentifier: "effect.sidechain.preset",
+            presetName: SidechainSettings.presets.first { $0.amount == sc.amount && $0.releaseMs == sc.releaseMs }?.name,
+            presets: SidechainSettings.presets.map { EffectMenuItem(id: $0.id, name: $0.name) },
+            onPreset: { id in
+                guard let preset = SidechainSettings.presets.first(where: { $0.id == id }) else { return }
+                editSidechain("Sidechain Preset") { preset.apply(to: &$0) }
+            }
+        ) {
+            VStack(spacing: 4) {
+                Menu {
+                    ForEach(0..<8, id: \.self) { index in
+                        Button(Self.trackShortNames[index]) { editSidechain("Sidechain Source") { $0.sourceTrack = index } }
+                    }
+                } label: {
+                    Text("SRC " + Self.trackShortNames[sc.sourceTrack] + " ▾")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(tint)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityIdentifier("effect.sidechain.source")
+                Menu {
+                    ForEach(0..<8, id: \.self) { index in
+                        if index != sc.sourceTrack {
+                            Toggle(Self.trackShortNames[index], isOn: Binding(
+                                get: { audioManager.effectsChain.sidechain.ducked[index] },
+                                set: { value in editSidechain("Sidechain Tracks") { $0.ducked[index] = value } }
+                            ))
+                        }
+                    }
+                    Divider()
+                    Toggle("Velocity → depth", isOn: Binding(
+                        get: { audioManager.effectsChain.sidechain.velocityScaling },
+                        set: { value in editSidechain("Sidechain Velocity") { $0.velocityScaling = value } }
+                    ))
+                } label: {
+                    Text("DUCK \(sc.duckMask.nonzeroBitCount) ▾")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(AppTheme.textSecondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityIdentifier("effect.sidechain.tracks")
+            }
+            KnobView(
+                value: Binding(
+                    get: { Double(audioManager.effectsChain.sidechain.amount) },
+                    set: { audioManager.effectsChain.sidechain.amount = Float(min(1, max(0, $0))); audioManager.updateEffects() }
+                ),
+                title: "DEPTH", color: tint, size: 40,
+                valueFormatter: { "\(Int($0 * 100))%" }
+            )
+            KnobView(
+                value: Binding(
+                    get: { Double((audioManager.effectsChain.sidechain.releaseMs - 50) / 550) },
+                    set: { audioManager.effectsChain.sidechain.releaseMs = Float(50 + min(1, max(0, $0)) * 550); audioManager.updateEffects() }
+                ),
+                title: "RELEASE", color: tint, size: 40,
+                valueFormatter: { String(format: "%.0fms", 50 + $0 * 550) }
+            )
+        }
+    }
+
+    private func editSidechain(_ action: String, _ body: @escaping (inout SidechainSettings) -> Void) {
+        prepareEdit()
+        edits.apply { chain, _ in body(&chain.sidechain) }
+        undoManager?.setActionName(action)
     }
 
     private func compKnob(

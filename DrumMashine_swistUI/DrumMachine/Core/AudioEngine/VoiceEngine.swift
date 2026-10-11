@@ -81,6 +81,11 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
         )
     }
 
+    /// Sidechain params, one atomic word. Safe from any thread; the render block reads it once per block.
+    func setSidechain(_ settings: SidechainSettings) {
+        mixer.sidechainWord.store(settings.packed, ordering: .releasing)
+    }
+
     func swapSample(track: Int, samples: [Float]) {
         mixer.swapSample(track: track, samples: samples)
     }
@@ -121,6 +126,12 @@ nonisolated private final class Mixer: @unchecked Sendable {
     /// Written by stop() so a fade is not stuck behind a future trigger in the command ring.
     private let pendingFade = Atomic<Int>(0)
     private let peakBits = Atomic<UInt32>(0)
+    /// `SidechainSettings.packed`. Written by the main actor, read once per render block.
+    let sidechainWord = Atomic<UInt64>(0)
+    /// Render-thread only.
+    private var sidechain = SidechainParams()
+    private var sidechainEnvelope: SidechainEnvelope
+    private var duckGain: Float = 1
 
     private let slotPtr: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>
     private let slotCount: UnsafeMutablePointer<Int>
@@ -140,6 +151,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
         trackStealFrames = chokeFadeFrames
         poolStealFrames = max(1, Int(0.001 * sampleRate))
         gainAlpha = Float(1 - exp(-1.0 / (0.005 * sampleRate)))
+        sidechainEnvelope = SidechainEnvelope(sampleRate: sampleRate)
 
         voices = .allocate(capacity: Self.voiceCount)
         voices.initialize(repeating: Voice(), count: Self.voiceCount)
@@ -285,6 +297,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
                 voices[index].chokeRemaining = fade
             }
         }
+        let word = sidechainWord.load(ordering: .acquiring)
+        sidechain = SidechainParams(packed: word)
         var panPlanned = false
         for frame in 0..<frameCount {
             let absolute = blockStart + Int64(frame)
@@ -295,6 +309,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
                 planPan(frameCount: frameCount)
                 panPlanned = true
             }
+            duckGain = sidechain.enabled ? sidechainEnvelope.next() : 1
             mix(frame: frame, left: left, right: right)
             blockPeak = max(blockPeak, abs(left[frame]), abs(right[frame]))
             smooth()
@@ -328,6 +343,9 @@ nonisolated private final class Mixer: @unchecked Sendable {
                 ptr: ptr,
                 count: slotCount[Int(command.track)]
             )
+            if sidechain.enabled, Int(command.track) == sidechain.source {
+                sidechainEnvelope.trigger(depth: sidechain.depth(velocity: command.velocity), releaseMs: sidechain.releaseMs)
+            }
         case .setGain:
             let track = Int(command.track)
             targetGain[track] = command.gain
@@ -480,7 +498,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
         left: UnsafeMutablePointer<Float>,
         right: UnsafeMutablePointer<Float>
     ) {
-        let gain = smoothGain[track]
+        var gain = smoothGain[track]
+        if duckGain < 1, sidechain.ducks(track: track) { gain *= duckGain }
         let f = Float(frame)
         left[frame] += sample * gain * (panL[track] + panStepL[track] * f)
         right[frame] += sample * gain * (panR[track] + panStepR[track] * f)

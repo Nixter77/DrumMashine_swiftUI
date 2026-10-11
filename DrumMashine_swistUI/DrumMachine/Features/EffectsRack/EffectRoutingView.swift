@@ -24,7 +24,7 @@ struct EffectRoutingView: View {
                 .accessibilityIdentifier("routing.default")
             }
             HStack(spacing: 6) {
-                fixedBlock("Voices", icon: "music.note")
+                fixedBlock(chain.sidechain.isOn ? "Voices+SC" : "Voices", icon: "music.note")
                 arrow
                 ForEach(Array(order.enumerated()), id: \.element) { index, slot in
                     effectBlock(slot, index: index)
@@ -33,6 +33,15 @@ struct EffectRoutingView: View {
                 fixedBlock("Limiter", icon: "speedometer")
                 arrow
                 fixedBlock("Out", icon: "speaker.wave.2.fill")
+            }
+            if chain.sidechain.isOn {
+                Label(
+                    "SIDECHAIN: \(EffectsRackView.trackShortNames[chain.sidechain.sourceTrack]) ducks \(chain.sidechain.duckMask.nonzeroBitCount) tracks · pre-FX, inside Voices",
+                    systemImage: "arrow.down.to.line"
+                )
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(Color(hex: "FF9F0A"))
+                .accessibilityIdentifier("routing.sidechain")
             }
             Text("Перетащите блок, чтобы изменить порядок. Точка — вкл/обход.")
                 .font(.system(size: 10, design: .monospaced))
