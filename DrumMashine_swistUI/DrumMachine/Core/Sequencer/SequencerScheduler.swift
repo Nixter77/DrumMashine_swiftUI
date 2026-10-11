@@ -265,7 +265,7 @@ nonisolated final class SequencerScheduler: @unchecked Sendable {
             // Groove slots follow the pattern step, so 8-step patterns use the same 8 slots every bar.
             let grooveSlot = positiveMod(stepIndex, max(snap.stepCount, 1))
             let grooveSteps = snap.groove.isActive ? snap.groove.timingOffset(step: grooveSlot) : 0
-            let earliest = offset + min(0, grooveSteps * samplesPerStep)
+            let earliest = max(-0.45 * samplesPerStep, offset + min(0, grooveSteps * samplesPerStep))
             if grid + Int64(earliest.rounded()) >= horizon {
                 break
             }
@@ -289,18 +289,25 @@ nonisolated final class SequencerScheduler: @unchecked Sendable {
         publish(stepCount: snap.stepCount)
     }
 
+    /// Every hit stays within [-0.45, +0.5] step of its grid line. Swing (<= 0.5) is intact,
+    /// and a negative groove/humanize pull on step k+1 can no longer land behind step k,
+    /// so pushes stay time-ordered across steps (lastEmitted then never has to merge hits).
+    @inline(__always) private func clampOffset(_ offset: Double) -> Double {
+        min(0.5 * samplesPerStep, max(-0.45 * samplesPerStep, offset))
+    }
+
     private func fire(stepIndex: Int, grid: Int64, baseOffset: Double, grooveSteps: Double, now: Int64, snap: PatternSnapshot) {
         let count = snap.stepCount
         guard count > 0 else { return }
         let groove = snap.groove
         let patternStep = positiveMod(stepIndex, count)
-        let plainTime = max(now, grid + Int64(baseOffset.rounded()))
+        let plainTime = max(now, grid + Int64(clampOffset(baseOffset).rounded()))
         var grooveTime = plainTime
         var velMul: Float = 1
         if groove.isActive {
             var off = baseOffset + grooveSteps * samplesPerStep
             if groove.randomDepth > 0 { off += groove.randomDepth * samplesPerStep * nextUnitSigned() }
-            grooveTime = max(now, grid + Int64(off.rounded()))
+            grooveTime = max(now, grid + Int64(clampOffset(off).rounded()))
             velMul = Float(groove.velocityMul(step: patternStep))
         }
         var pending = 0

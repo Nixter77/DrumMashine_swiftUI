@@ -88,3 +88,24 @@ struct GrooveTests {
         #expect(reloaded.grooves.map(\.name) == ["MPC 54% 2"])
     }
 }
+
+/// P2-2: a large negative groove pull on step k+1 must not land behind step k.
+struct GrooveCrossStepTests {
+    @Test func negativePullNeverMergesWithThePreviousStep() throws {
+        let engine = VoiceEngine(sampleRate: 48_000)
+        var click = [Float](repeating: 0, count: 64)
+        click[0] = 1
+        engine.swapSample(track: 0, samples: click)
+        var snap = kickPattern(bpm: 120)
+        let timing = (0..<16).map { $0 % 2 == 0 ? 0.4 : -0.9 }
+        snap.groove = GrooveSnapshot(timing: timing, velocity: Array(repeating: 1, count: 16),
+                                     randomDepth: 0, trackOn: Array(repeating: true, count: 8), isActive: true)
+        let scheduler = SequencerScheduler(voiceEngine: engine, sampleRate: 48_000)
+        scheduler.replace(snap)
+        scheduler.begin(at: 0, ioBufferFrames: 512, timer: false)
+        let rendered = try drive(engine: engine, scheduler: scheduler, frames: 192_000)
+        let hits = onsets(rendered, threshold: 0.2)
+        #expect(hits.count == 32, "\(hits.count) onsets")
+        #expect(zip(hits, hits.dropFirst()).allSatisfy { $0 < $1 })
+    }
+}
