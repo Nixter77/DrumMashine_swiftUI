@@ -167,3 +167,23 @@ private func corruptFiles(_ directory: URL) throws -> [URL] {
 private enum CompatibilityReadError: Error {
     case missing
 }
+
+/// Old or hand-trimmed files without the session/slots or name/category keys still load.
+struct MissingKeyToleranceTests {
+    @Test func projectWithoutSessionAndSlotsDecodes() throws {
+        let old = #"{"version":1,"name":"Old beat"}"#
+        let project = try JSONDecoder().decode(DrumProject.self, from: Data(old.utf8))
+        #expect(project.name == "Old beat")
+        #expect(project.session.tracks.isEmpty)
+        #expect(project.session.bpm == 120)
+        #expect(project.slots.patterns.isEmpty)
+    }
+
+    @Test func presetWithoutNameAndCategoryDecodes() throws {
+        let old = #"{"filename":"kick_01","volume":0.8}"#
+        let preset = try JSONDecoder().decode(SoundPreset.self, from: Data(old.utf8))
+        #expect(preset.name == "Sound")
+        #expect(preset.category == .percussion)
+        #expect(preset.volume == 0.8)
+    }
+}

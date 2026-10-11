@@ -53,8 +53,11 @@ extension DrumProject {
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Beat"
         version = storedVersion
-        session = try container.decode(SessionState.self, forKey: .session)
-        slots = try container.decode(PatternLibrary.self, forKey: .slots)
+        // Missing keys fall back to the same defaults as `init(name:)` (empty session tracks
+        // = library sounds; no pattern slots) instead of failing the whole import.
+        session = try container.decodeIfPresent(SessionState.self, forKey: .session) ?? SessionState(tracks: [])
+        slots = try container.decodeIfPresent(PatternLibrary.self, forKey: .slots)
+            ?? PatternLibrary(patterns: [], activePatternIndex: 0)
         userPresets = try container.decodeIfPresent([SoundPreset].self, forKey: .userPresets) ?? []
         kits = try container.decodeIfPresent([DrumKit].self, forKey: .kits) ?? []
         samples = try container.decodeIfPresent([ProjectSample].self, forKey: .samples) ?? []

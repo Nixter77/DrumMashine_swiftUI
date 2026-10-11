@@ -198,9 +198,9 @@ extension SoundPreset {
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try container.decode(String.self, forKey: .name)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Sound"
         filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? ""
-        category = try container.decode(SoundCategory.self, forKey: .category)
+        category = try container.decodeIfPresent(SoundCategory.self, forKey: .category) ?? .percussion
         volume = try container.decodeIfPresent(Float.self, forKey: .volume) ?? 1.0
         pan = try container.decodeIfPresent(Float.self, forKey: .pan) ?? 0.0
         pitch = try container.decodeIfPresent(Float.self, forKey: .pitch) ?? 0.0
