@@ -326,7 +326,8 @@ class SequencerEngine {
         let fill: [[Float?]]? = isFillActive
             ? FillGenerator.apply(fillStyle,
                                   base: tracks.map { t in t.steps.prefix(count).map { $0.isActive ? $0.velocity : nil } },
-                                  stepCount: count)
+                                  stepCount: count,
+                                  roles: FillGenerator.Roles(voices: tracks.map { $0.soundPreset.resolvedVoice }))
             : nil
         let snapTracks: [TrackSnapshot] = tracks.enumerated().map { index, track in
             let steps = track.steps.prefix(count).enumerated().map { s, step in

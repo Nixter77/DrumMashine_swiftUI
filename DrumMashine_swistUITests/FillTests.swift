@@ -57,3 +57,29 @@ struct FillPersistenceTests {
         #expect(engine.persistCount == saves)
     }
 }
+
+/// P2-4: FILL roles follow each track's sound, so a sound change moves the fill with it.
+@MainActor
+struct FillRoleTests {
+    @Test func rolesFollowTheSoundAfterASwap() {
+        let engine = SequencerEngine()
+        let library = SoundLibraryManager.shared
+        engine.tracks[4].soundPreset = library.defaultPreset(forTrackIndex: 7)   // tom pad -> perc
+        engine.tracks[6].soundPreset = library.defaultPreset(forTrackIndex: 4)   // crash pad -> tom
+        let roles = FillGenerator.Roles(voices: engine.tracks.map { $0.soundPreset.resolvedVoice })
+        #expect(roles.tom == 6)
+        #expect(roles.kick == 0)
+        #expect(roles.busy.contains(4))   // perc is busy
+        let base: [[Float?]] = (0..<8).map { _ in Array(repeating: nil, count: 16) }
+        let f = FillGenerator.apply(.toms, base: base, stepCount: 16, roles: roles)
+        #expect((10..<16).allSatisfy { f[6][$0] != nil })
+        #expect((8..<16).allSatisfy { f[4][$0] == nil })
+    }
+
+    @Test func missingSnareFallsBackToClapAndSkipsAbsentRoles() {
+        let roles = FillGenerator.Roles(voices: [.kick, .clap, .closedHat, .perc, .perc, .ride, .crash, .fx])
+        #expect(roles.snare == 1)
+        #expect(roles.tom == 1)
+        #expect(FillGenerator.Roles.legacy == FillGenerator.Roles(voices: [.kick, .snare, .closedHat, .clap, .tom, .ride, .crash, .perc]))
+    }
+}
