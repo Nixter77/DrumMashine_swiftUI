@@ -38,8 +38,8 @@ nonisolated enum EffectPresets {
         CompressorPreset(id: "comp.glue", name: "Glue", threshold: -18, amount: 0.35, attackMs: 30, releaseMs: 200, makeup: 3),
         CompressorPreset(id: "comp.punch", name: "Punch", threshold: -20, amount: 0.55, attackMs: 25, releaseMs: 120, makeup: 5),
         CompressorPreset(id: "comp.snap", name: "Snap", threshold: -24, amount: 0.5, attackMs: 5, releaseMs: 60, makeup: 4),
-        CompressorPreset(id: "comp.squash", name: "Squash", threshold: -30, amount: 0.8, attackMs: 1, releaseMs: 80, makeup: 5),
-        CompressorPreset(id: "comp.smash", name: "Smash", threshold: -36, amount: 0.95, attackMs: 0.1, releaseMs: 40, makeup: 6)
+        CompressorPreset(id: "comp.squash", name: "Squash", threshold: -18, amount: 0.8, attackMs: 1, releaseMs: 80, makeup: 8),
+        CompressorPreset(id: "comp.smash", name: "Smash", threshold: -20, amount: 0.9, attackMs: 0.1, releaseMs: 40, makeup: 13)
     ]
 
     static let scenes: [Scene] = [

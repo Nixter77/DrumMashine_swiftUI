@@ -87,6 +87,8 @@ struct CrackleDiagnosticsTests {
                 report.append("\(name)/\(sc) voices=\(pre) out=\(peak) overs=\(overs)")
                 #expect(overs == 0, "\(name)/\(sc) has \(overs) samples over 1.0")
                 #expect(peak <= MasterLimiter.ceilingGain + 0.02, "\(name)/\(sc) peak \(peak)")
+                // Lower bound: no scene may come out nearly silent (Lo-Fi Tape / Industrial were 0.20 / 0.07).
+                #expect(peak >= 0.4, "\(name)/\(sc) too quiet: peak \(peak)")
                 #expect(out.allSatisfy { $0.isFinite })
             }
         }
