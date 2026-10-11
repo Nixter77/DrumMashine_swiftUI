@@ -2,6 +2,7 @@ import AVFoundation
 import AudioToolbox
 import Foundation
 import Observation
+import Synchronization
 
 /// Apple's peak limiter has attack, decay, and pre-gain, but no ceiling.
 /// 0.89 is about −1 dBFS on the main mixer when the unit is already limiting to full scale.
@@ -791,18 +792,31 @@ class AudioEngineManager {
     }
     
     // MARK: - Load Sound Preset onto a Track
+    /// Latest load request per track (main actor) and its mirror for the builders.
+    private(set) var trackLoadTicket = [Int](repeating: 0, count: 9)
+    private let trackLoadTickets = LoadTickets(count: 9)
+
     func loadSound(preset: SoundPreset, forTrack trackIndex: Int) {
         guard trackIndex >= 0, trackIndex < trackPresets.count else { return }
         trackPresets[trackIndex] = preset
+        // Knob edits keep the preset id, so the id check alone let an older, slower build
+        // overwrite a newer one. Each request gets a ticket; only the latest installs, and a
+        // build already superseded before it starts is skipped (less CPU next to the IO thread).
+        trackLoadTicket[trackIndex] += 1
+        let ticket = trackLoadTicket[trackIndex]
+        let tickets = trackLoadTickets
+        tickets.set(trackIndex, ticket)
         let sampleRate = outputSampleRate
         let epoch = sampleInstallEpoch
         let sampleRoot = self.sampleRoot
-        Task.detached(priority: .userInitiated) {
+        Task.detached(priority: .utility) {
+            guard tickets.get(trackIndex) == ticket else { return }
             let samples = DrumSynthesizer.samples(for: preset, sampleRate: sampleRate, sampleRoot: sampleRoot)
             await MainActor.run {
                 let manager = AudioEngineManager.shared
                 guard epoch == manager.sampleInstallEpoch else { return }
                 guard abs(manager.outputSampleRate - sampleRate) < 0.5 else { return }
+                guard manager.trackLoadTicket[trackIndex] == ticket else { return }
                 guard manager.trackPresets[trackIndex]?.id == preset.id else { return }
                 manager.installTrackBuffer(samples, preset: preset, trackIndex: trackIndex)
             }
@@ -864,5 +878,18 @@ nonisolated struct PreviewSampleCache {
 
     func contains(id: UUID, parameterHash: Int = 0) -> Bool {
         entries[Key(id: id, parameterHash: parameterHash)] != nil
+    }
+}
+
+
+/// Per-track ticket mirror read by detached buffer builders. Off the render thread, so a Mutex is fine.
+nonisolated final class LoadTickets: @unchecked Sendable {
+    private let slots: Mutex<[Int]>
+    init(count: Int) { slots = Mutex([Int](repeating: 0, count: count)) }
+    func set(_ index: Int, _ value: Int) {
+        slots.withLock { if $0.indices.contains(index) { $0[index] = value } }
+    }
+    func get(_ index: Int) -> Int {
+        slots.withLock { $0.indices.contains(index) ? $0[index] : -1 }
     }
 }

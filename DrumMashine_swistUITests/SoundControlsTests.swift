@@ -107,3 +107,20 @@ struct LibraryVisibilityTests {
         }
     }
 }
+
+@MainActor
+struct BufferLoadTicketTests {
+    /// Every load request supersedes the previous one for that track.
+    @Test func eachLoadTakesANewTicket() {
+        let audio = AudioEngineManager.shared
+        let preset = SoundLibraryManager.shared.defaultPreset(forTrackIndex: 0)
+        let before = audio.trackLoadTicket[0]
+        audio.loadSound(preset: preset, forTrack: 0)
+        audio.loadSound(preset: preset, forTrack: 0)
+        #expect(audio.trackLoadTicket[0] == before + 2)
+        let tickets = LoadTickets(count: 2)
+        tickets.set(1, 7)
+        #expect(tickets.get(1) == 7)
+        #expect(tickets.get(5) == -1)
+    }
+}
