@@ -17,9 +17,10 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
     let sampleRate: Double
     private let mixer: Mixer
 
-    init(sampleRate: Double) {
+    /// `retireCapacity` only shrinks the retire ring for overflow tests.
+    init(sampleRate: Double, retireCapacity: Int = 1024) {
         self.sampleRate = sampleRate
-        let mixer = Mixer(sampleRate: sampleRate)
+        let mixer = Mixer(sampleRate: sampleRate, retireCapacity: retireCapacity)
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: sampleRate,
@@ -40,6 +41,10 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
     /// Commands the render thread has applied (all lanes). Diagnostic / test hook.
     var appliedCommandCount: Int64 { mixer.appliedCommandCount }
     var activeVoiceCount: Int { mixer.activeVoiceCount }
+    /// Old buffers parked by the render thread because the retire ring was full.
+    var retireBacklogCount: Int { mixer.retireBacklogCount }
+    /// Buffers that could be neither retired nor parked (should stay 0).
+    var leakedBufferCount: Int { mixer.leakedBufferCount }
 
     /// Peak of the voice sum since the last read, before the master limiter.
     func consumePreLimiterPeak() -> Float { mixer.consumePreLimiterPeak() }
@@ -115,6 +120,15 @@ nonisolated private final class Mixer: @unchecked Sendable {
     let controlRing = CommandRing(capacity: ringCapacity)
     let sequencerRing = CommandRing(capacity: ringCapacity)
     private let retired: UnsafeMutablePointer<Retired>
+    private let retireCapacity: Int
+    private let retireMask: Int
+    /// Render-thread-only overflow park for the retire ring, preallocated. Entries are
+    /// re-offered to the ring at every block start; the main actor frees them from there.
+    private let backlog: UnsafeMutablePointer<Retired>
+    private static let backlogCapacity = 4096
+    private var backlogCount = 0
+    private let backlogPublished = Atomic<Int>(0)
+    private let leakCounter = Atomic<Int>(0)
     private let retiredHead = Atomic<Int>(0)
     private let retiredTail = Atomic<Int>(0)
     private let frameClock = Atomic<Int64>(0)
@@ -145,8 +159,13 @@ nonisolated private final class Mixer: @unchecked Sendable {
     private let panStepL: UnsafeMutablePointer<Float>
     private let panStepR: UnsafeMutablePointer<Float>
 
-    init(sampleRate: Double) {
+    init(sampleRate: Double, retireCapacity: Int = 1024) {
+        precondition(retireCapacity > 0 && retireCapacity & (retireCapacity - 1) == 0)
         self.sampleRate = sampleRate
+        self.retireCapacity = retireCapacity
+        retireMask = retireCapacity - 1
+        backlog = .allocate(capacity: Self.backlogCapacity)
+        backlog.initialize(repeating: Retired(), count: Self.backlogCapacity)
         chokeFadeFrames = max(1, Int(0.003 * sampleRate))
         trackStealFrames = chokeFadeFrames
         poolStealFrames = max(1, Int(0.001 * sampleRate))
@@ -155,8 +174,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
 
         voices = .allocate(capacity: Self.voiceCount)
         voices.initialize(repeating: Voice(), count: Self.voiceCount)
-        retired = .allocate(capacity: Self.ringCapacity)
-        retired.initialize(repeating: Retired(), count: Self.ringCapacity)
+        retired = .allocate(capacity: retireCapacity)
+        retired.initialize(repeating: Retired(), count: retireCapacity)
         slotPtr = .allocate(capacity: Self.slotCount)
         slotPtr.initialize(repeating: nil, count: Self.slotCount)
         slotCount = .allocate(capacity: Self.slotCount)
@@ -182,6 +201,15 @@ nonisolated private final class Mixer: @unchecked Sendable {
 
     deinit {
         drainRetired()
+        // deinit runs off the audio thread once the node is gone: free anything still parked.
+        for index in 0..<backlogCount {
+            if let ptr = backlog[index].ptr, backlog[index].count > 0 {
+                ptr.deinitialize(count: backlog[index].count)
+                ptr.deallocate()
+            }
+        }
+        backlog.deinitialize(count: Self.backlogCapacity)
+        backlog.deallocate()
         for slot in 0..<Self.slotCount {
             if let ptr = slotPtr[slot] {
                 ptr.deinitialize(count: slotCount[slot])
@@ -190,7 +218,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
         }
         voices.deinitialize(count: Self.voiceCount)
         voices.deallocate()
-        retired.deinitialize(count: Self.ringCapacity)
+        retired.deinitialize(count: retireCapacity)
         retired.deallocate()
         slotPtr.deinitialize(count: Self.slotCount)
         slotPtr.deallocate()
@@ -266,7 +294,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
             let tail = retiredTail.load(ordering: .relaxed)
             let head = retiredHead.load(ordering: .acquiring)
             if tail == head { return }
-            let item = retired[tail & Self.ringMask]
+            let item = retired[tail & retireMask]
             if let ptr = item.ptr, item.count > 0 {
                 ptr.deinitialize(count: item.count)
                 ptr.deallocate()
@@ -287,6 +315,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
             right[index] = 0
         }
 
+        flushBacklog()
         let blockStart = frameClock.load(ordering: .relaxed)
         var blockPeak: Float = 0
         // Stop fade: read once per block, not once per frame.
@@ -563,12 +592,39 @@ nonisolated private final class Mixer: @unchecked Sendable {
         retire(ptr, count: count)
     }
 
+    var retireBacklogCount: Int { backlogPublished.load(ordering: .acquiring) }
+    var leakedBufferCount: Int { leakCounter.load(ordering: .acquiring) }
+
+    /// Render thread. Never frees: a full ring parks the pointer in the preallocated backlog.
     private func retire(_ ptr: UnsafeMutablePointer<Float>, count: Int) {
+        if pushRetired(Retired(ptr: ptr, count: count)) { return }
+        if backlogCount < Self.backlogCapacity {
+            backlog[backlogCount] = Retired(ptr: ptr, count: count)
+            backlogCount += 1
+            backlogPublished.store(backlogCount, ordering: .releasing)
+        } else {
+            _ = leakCounter.wrappingAdd(1, ordering: .relaxed)
+        }
+    }
+
+    private func pushRetired(_ item: Retired) -> Bool {
         let head = retiredHead.load(ordering: .relaxed)
         let tail = retiredTail.load(ordering: .acquiring)
-        if head - tail >= Self.ringCapacity { return }
-        retired[head & Self.ringMask] = Retired(ptr: ptr, count: count)
+        if head - tail >= retireCapacity { return false }
+        retired[head & retireMask] = item
         retiredHead.store(head + 1, ordering: .releasing)
+        return true
+    }
+
+    /// Render thread, block start: re-offer parked pointers once the main actor made room.
+    private func flushBacklog() {
+        guard backlogCount > 0 else { return }
+        var moved = 0
+        while moved < backlogCount, pushRetired(backlog[moved]) { moved += 1 }
+        guard moved > 0 else { return }
+        for index in moved..<backlogCount { backlog[index - moved] = backlog[index] }
+        backlogCount -= moved
+        backlogPublished.store(backlogCount, ordering: .releasing)
     }
 
     private func enqueue(_ ring: CommandRing, _ command: Command) {

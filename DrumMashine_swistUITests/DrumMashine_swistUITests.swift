@@ -1305,3 +1305,23 @@ struct DelayRetimeTests {
         #expect(AudioEngineManager.delayTimeChanged(from: 0.25, to: 0.248) == true)
     }
 }
+
+
+/// P2-1: a full retire ring parks old buffers (no leak, no free on the audio thread);
+/// they reach the main actor once it drains.
+struct RetireOverflowTests {
+    @Test func overflowParksAndLaterReleases() throws {
+        let engine = VoiceEngine(sampleRate: benchSampleRate, retireCapacity: 4)
+        let buffer = [Float](repeating: 0.1, count: 32)
+        for _ in 0..<21 { engine.swapSample(track: 0, samples: buffer) }
+        // One block applies all 21 swaps: 20 old buffers, ring holds 4, 16 parked.
+        _ = try renderOffline(frames: 512, chunkFrames: 512) { _ in engine.sourceNode }
+        #expect(engine.retireBacklogCount == 16)
+        #expect(engine.leakedBufferCount == 0)
+        _ = try renderOffline(frames: 512 * 8, chunkFrames: 512, beforeChunk: {
+            engine.drainRetired()
+        }) { _ in engine.sourceNode }
+        #expect(engine.retireBacklogCount == 0)
+        #expect(engine.leakedBufferCount == 0)
+    }
+}
