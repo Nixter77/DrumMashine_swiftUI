@@ -103,7 +103,6 @@ nonisolated enum EffectPresets {
         let makeup: Float
 
         func apply(to chain: inout EffectsChain, bpm: Double) {
-            _ = bpm
             chain.compressor.isOn = true
             chain.compressor.threshold = threshold
             chain.compressor.amount = amount
@@ -127,7 +126,6 @@ nonisolated enum EffectPresets {
         let mix: Float
 
         func apply(to chain: inout EffectsChain, bpm: Double) {
-            _ = bpm
             chain.reverb.isOn = true
             chain.reverb.room = room
             chain.reverb.wetDryMix = mix
@@ -165,7 +163,6 @@ nonisolated enum EffectPresets {
         let preGain: Float
 
         func apply(to chain: inout EffectsChain, bpm: Double) {
-            _ = bpm
             chain.distortion.isOn = true
             chain.distortion.wetDryMix = mix
             chain.distortion.preGain = preGain
@@ -180,7 +177,6 @@ nonisolated enum EffectPresets {
         let high: Float
 
         func apply(to chain: inout EffectsChain, bpm: Double) {
-            _ = bpm
             chain.eq.isOn = true
             chain.eq.low = low
             chain.eq.mid = mid

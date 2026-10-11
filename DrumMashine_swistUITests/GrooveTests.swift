@@ -61,7 +61,7 @@ struct GrooveTests {
         while t.steps.count < 16 { t.steps.append(SequencerStep()) }
         t.steps[0].isActive = true; t.steps[0].velocity = 1.0
         t.steps[4].isActive = true; t.steps[4].velocity = 0.6
-        let g = SequencerEngine.extractGroove(tracks: [t], stepCount: 16, swing: 20, name: "x")
+        let g = SequencerEngine.extractGroove(tracks: [t], stepCount: 16, name: "x")
         #expect(g.velocity[0] == 1.0)
         #expect(abs(g.velocity[4] - 0.6) < 1e-6)
         #expect(g.velocity[2] == 1.0)

@@ -4,7 +4,7 @@ extension SequencerEngine {
     /// Builds a groove from the current pattern: per-16th accent from the mean active velocity
     /// (normalised to the loudest step). Timing stays straight: the SWING control is applied on top
     /// at playback, so copying it into the groove would double it.
-    static func extractGroove(tracks: [SequencerTrack], stepCount: Int, swing: Double, name: String) -> GrooveTemplate {
+    static func extractGroove(tracks: [SequencerTrack], stepCount: Int, name: String) -> GrooveTemplate {
         var sum = Array(repeating: 0.0, count: 16)
         var hits = Array(repeating: 0, count: 16)
         for track in tracks {
@@ -16,7 +16,6 @@ extension SequencerEngine {
         let mean = (0..<16).map { hits[$0] > 0 ? sum[$0] / Double(hits[$0]) : 0 }
         let peak = mean.max() ?? 0
         let velocity = mean.map { peak > 0 && $0 > 0 ? max(0.5, $0 / peak) : 1.0 }
-        _ = swing
         let timing = Array(repeating: 0.0, count: 16)
         return GrooveTemplate(id: "user-\(UUID().uuidString)", name: name, timing: timing, velocity: velocity).normalized()
     }
@@ -24,7 +23,7 @@ extension SequencerEngine {
     /// Saves the current pattern's feel as a user groove and selects it.
     @discardableResult
     func extractGrooveFromPattern(name: String = "Мой грув") -> GrooveTemplate {
-        let g = Self.extractGroove(tracks: tracks, stepCount: stepCount.rawValue, swing: swing, name: name)
+        let g = Self.extractGroove(tracks: tracks, stepCount: stepCount.rawValue, name: name)
         let saved = UserGrooveStore.shared.add(g)
         grooveSettings.grooveID = saved.id
         return saved
