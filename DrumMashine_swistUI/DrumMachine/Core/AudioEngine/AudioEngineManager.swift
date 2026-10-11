@@ -401,6 +401,8 @@ class AudioEngineManager {
         [voiceEngine.sourceNode] + order.map(node(for:)) + [limiterNode, engine.mainMixerNode]
     }
 
+    var isEngineRunningForTesting: Bool { engine.isRunning }
+
     /// Nodes actually connected now, following the graph from the voice source.
     func connectedChainForTesting() -> [AVAudioNode] {
         var result: [AVAudioNode] = [voiceEngine.sourceNode]
@@ -419,9 +421,11 @@ class AudioEngineManager {
     private func applyRoutingIfNeeded() {
         let order = EffectsChain.sanitized(effectsChain.order)
         guard let connectedOrder, connectedOrder != order, let format = processingFormat else { return }
-        let mixer = engine.mainMixerNode
-        let volume = mixer.outputVolume
-        mixer.outputVolume = 0
+        // Disconnecting mid-chain nodes while the IO thread renders can tear the graph
+        // (dropouts/clicks), and an outputVolume of 0 is not synchronous with the render
+        // cycle. Pause the engine for the rewire; the voice clock simply resumes after.
+        let wasRunning = engine.isRunning
+        if wasRunning { engine.pause() }
         for slot in connectedOrder { disconnectOutputIfNeeded(node(for: slot)) }
         disconnectOutputIfNeeded(voiceEngine.sourceNode)
         disconnectOutputIfNeeded(limiterNode)
@@ -430,7 +434,9 @@ class AudioEngineManager {
             engine.connect(from, to: to, format: format)
         }
         self.connectedOrder = order
-        mixer.outputVolume = volume
+        if wasRunning {
+            do { try engine.start() } catch { errorMessage = "Audio restart after re-routing failed: \(error.localizedDescription)" }
+        }
     }
 
     private func disconnectVoiceChain() {

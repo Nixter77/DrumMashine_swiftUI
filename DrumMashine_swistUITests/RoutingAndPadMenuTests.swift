@@ -87,3 +87,20 @@ struct PadSoundMenuTests {
         }
     }
 }
+
+@MainActor
+struct RoutingWhileRunningTests {
+    /// Re-routing pauses the engine for the rewire and must leave it running as before.
+    @Test func rerouteKeepsTheEngineRunningState() {
+        let audio = AudioEngineManager.shared
+        let saved = audio.effectsChain
+        let before = audio.isEngineRunningForTesting
+        defer { audio.effectsChain = saved; audio.updateEffects() }
+        var chain = saved
+        chain.order = [.eq, .compressor, .reverb, .delay, .distortion]
+        audio.effectsChain = chain
+        audio.updateEffects()
+        #expect(audio.isEngineRunningForTesting == before)
+        #expect(audio.connectedChainForTesting().map(ObjectIdentifier.init) == audio.routedNodes(chain.order).map(ObjectIdentifier.init))
+    }
+}
