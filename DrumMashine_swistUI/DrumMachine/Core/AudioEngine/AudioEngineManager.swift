@@ -418,15 +418,45 @@ class AudioEngineManager {
         return result
     }
 
-    /// Rewires the effect order on the main actor. The master is muted for the few
-    /// milliseconds of reconnection so the switch does not click; the render thread is never touched.
+    /// Rewires done so far. Test hook.
+    private(set) var routingRewireCount = 0
+    private var pendingRoutingTask: Task<Void, Never>?
+    /// Arrow clicks and drops arrive in bursts; a running graph is rewired once they settle.
+    static let routingDebounceNanoseconds: UInt64 = 150_000_000
+
+    /// Order changes rewire at once while the engine is stopped. While it runs they are
+    /// debounced (~150 ms), so a burst of arrow presses costs one pause/restart, not one each.
     private func applyRoutingIfNeeded() {
         let order = EffectsChain.sanitized(effectsChain.order)
+        guard let connectedOrder, connectedOrder != order, processingFormat != nil else {
+            pendingRoutingTask?.cancel()
+            pendingRoutingTask = nil
+            return
+        }
+        guard engine.isRunning else {
+            flushPendingRouting()
+            return
+        }
+        pendingRoutingTask?.cancel()
+        pendingRoutingTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.routingDebounceNanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingRouting()
+        }
+    }
+
+    /// Applies a pending order now. Tests call it instead of waiting for the debounce.
+    func flushPendingRouting() {
+        pendingRoutingTask?.cancel()
+        pendingRoutingTask = nil
+        let order = EffectsChain.sanitized(effectsChain.order)
         guard let connectedOrder, connectedOrder != order, let format = processingFormat else { return }
-        // Disconnecting mid-chain nodes while the IO thread renders can tear the graph
-        // (dropouts/clicks), and an outputVolume of 0 is not synchronous with the render
-        // cycle. Pause the engine for the rewire; the voice clock simply resumes after.
+        // Disconnecting mid-chain nodes while the IO thread renders can tear the graph,
+        // so the engine is paused for the rewire. The sequencer is checkpointed first and
+        // re-anchored at the same step afterwards (the device-change path), so no burst of
+        // late notes follows the restart.
         let wasRunning = engine.isRunning
+        let transport = wasRunning ? (deviceChangeSuspend?() ?? (wasPlaying: false, step: 0)) : (wasPlaying: false, step: 0)
         if wasRunning { engine.pause() }
         for slot in connectedOrder { disconnectOutputIfNeeded(node(for: slot)) }
         disconnectOutputIfNeeded(voiceEngine.sourceNode)
@@ -436,8 +466,10 @@ class AudioEngineManager {
             engine.connect(from, to: to, format: format)
         }
         self.connectedOrder = order
+        routingRewireCount += 1
         if wasRunning {
             do { try engine.start() } catch { errorMessage = "Audio restart after re-routing failed: \(error.localizedDescription)" }
+            deviceChangeResume?(voiceEngine, outputSampleRate, transport.step, transport.wasPlaying)
         }
     }
 

@@ -50,15 +50,18 @@ struct EffectRoutingTests {
         defer {
             audio.effectsChain = saved
             audio.updateEffects()
+            audio.flushPendingRouting()
         }
         var chain = saved
         chain.order = [.compressor, .eq, .reverb, .delay, .distortion]
         audio.effectsChain = chain
         audio.updateEffects()
+        audio.flushPendingRouting()
         #expect(audio.connectedChainForTesting().map(ObjectIdentifier.init) == audio.routedNodes(chain.order).map(ObjectIdentifier.init))
         chain.order = EffectsChain.EffectSlot.defaultOrder
         audio.effectsChain = chain
         audio.updateEffects()
+        audio.flushPendingRouting()
         #expect(audio.connectedChainForTesting().map(ObjectIdentifier.init) == audio.routedNodes(chain.order).map(ObjectIdentifier.init))
     }
 }
@@ -95,12 +98,38 @@ struct RoutingWhileRunningTests {
         let audio = AudioEngineManager.shared
         let saved = audio.effectsChain
         let before = audio.isEngineRunningForTesting
-        defer { audio.effectsChain = saved; audio.updateEffects() }
+        defer { audio.effectsChain = saved; audio.updateEffects(); audio.flushPendingRouting() }
         var chain = saved
         chain.order = [.eq, .compressor, .reverb, .delay, .distortion]
         audio.effectsChain = chain
         audio.updateEffects()
+        audio.flushPendingRouting()
         #expect(audio.isEngineRunningForTesting == before)
+        #expect(audio.connectedChainForTesting().map(ObjectIdentifier.init) == audio.routedNodes(chain.order).map(ObjectIdentifier.init))
+    }
+}
+
+
+@MainActor
+struct RoutingDebounceTests {
+    /// A burst of order changes on a running engine costs one rewire, after the burst.
+    @Test func burstOfMovesRewiresOnce() {
+        let audio = AudioEngineManager.shared
+        guard audio.isEngineRunningForTesting else { return }
+        let saved = audio.effectsChain
+        defer { audio.effectsChain = saved; audio.updateEffects(); audio.flushPendingRouting() }
+        let before = audio.routingRewireCount
+        var chain = saved
+        for _ in 0..<5 {
+            chain.move(.compressor, by: -1)
+            audio.effectsChain = chain
+            audio.updateEffects()
+        }
+        // No await between the burst and the flush: other suites share the manager.
+        #expect(audio.routingRewireCount == before)
+        audio.flushPendingRouting()
+        #expect(audio.routingRewireCount == before + 1)
+        #expect(audio.isEngineRunningForTesting)
         #expect(audio.connectedChainForTesting().map(ObjectIdentifier.init) == audio.routedNodes(chain.order).map(ObjectIdentifier.init))
     }
 }
