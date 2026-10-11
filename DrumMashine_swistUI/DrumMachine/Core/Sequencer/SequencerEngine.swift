@@ -138,15 +138,15 @@ class SequencerEngine {
 
     // MARK: Fill
     /// FILL held in the UI.
-    var fillHeld = false { didSet { if fillHeld != oldValue { publishSnapshot() } } }
+    var fillHeld = false { didSet { if fillHeld != oldValue { publishSnapshot(persist: false) } } }
     /// Key F: one fill at the end of the current loop, then off.
-    var fillOnce = false { didSet { if fillOnce != oldValue { publishSnapshot() } } }
+    var fillOnce = false { didSet { if fillOnce != oldValue { publishSnapshot(persist: false) } } }
     /// 0 = off, otherwise a fill at the end of every Nth loop.
     var autoFillEvery: Int = UserDefaults.standard.integer(forKey: "autoFillEvery") {
         didSet { UserDefaults.standard.set(autoFillEvery, forKey: "autoFillEvery"); updateAutoFill() }
     }
     var fillStyle: FillStyle = FillStyle(rawValue: UserDefaults.standard.string(forKey: "fillStyle") ?? "") ?? .snareRoll {
-        didSet { UserDefaults.standard.set(fillStyle.rawValue, forKey: "fillStyle"); if isFillActive { publishSnapshot() } }
+        didSet { UserDefaults.standard.set(fillStyle.rawValue, forKey: "fillStyle"); if isFillActive { publishSnapshot(persist: false) } }
     }
     @ObservationIgnored private var loopsPlayed = 0
     private(set) var autoFillActive = false
@@ -154,7 +154,7 @@ class SequencerEngine {
 
     private func updateAutoFill() {
         let next = autoFillEvery > 0 && isPlaying && (loopsPlayed + 1) % autoFillEvery == 0
-        if next != autoFillActive { autoFillActive = next; publishSnapshot() }
+        if next != autoFillActive { autoFillActive = next; publishSnapshot(persist: false) }
     }
 
     /// Heard playhead wrapped to step 0.
@@ -313,7 +313,12 @@ class SequencerEngine {
     /// Scheduler snapshots published so far. Test hook for batching (#9).
     @ObservationIgnored private(set) var snapshotPublishCount = 0
 
-    private func publishSnapshot() {
+    /// Session/pattern saves triggered by publishes. Test hook.
+    @ObservationIgnored private(set) var persistCount = 0
+
+    /// `persist: false` for transient playback state (FILL on/off, auto-fill at a loop
+    /// wrap): the pattern did not change, so do not re-encode and save session + pattern.
+    private func publishSnapshot(persist: Bool = true) {
         if suppressSnapshot { return }
         snapshotPublishCount += 1
         let count = stepCount.rawValue
@@ -349,7 +354,8 @@ class SequencerEngine {
             humanize: humanize,
             groove: GrooveSnapshot(template: activeGroove, settings: grooveSettings)
         ))
-        if !suppressSessionSave {
+        if persist && !suppressSessionSave {
+            persistCount += 1
             SessionStore.noteSequencer(self)
             PatternManager.shared.updateActive(from: self)
         }

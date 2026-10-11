@@ -41,3 +41,19 @@ struct FillTests {
         #expect((10..<16).allSatisfy { f[4][$0] != nil })
     }
 }
+
+@MainActor
+struct FillPersistenceTests {
+    /// FILL toggles republish the scheduler snapshot but never save session/pattern.
+    @Test func fillTogglesDoNotSave() {
+        let engine = SequencerEngine()
+        let publishes = engine.snapshotPublishCount
+        let saves = engine.persistCount
+        engine.fillHeld = true
+        engine.fillHeld = false
+        engine.fillOnce = true
+        engine.fillOnce = false
+        #expect(engine.snapshotPublishCount == publishes + 4)
+        #expect(engine.persistCount == saves)
+    }
+}
