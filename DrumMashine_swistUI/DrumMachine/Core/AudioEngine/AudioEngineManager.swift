@@ -3,6 +3,7 @@ import AudioToolbox
 import Foundation
 import Observation
 import Synchronization
+import os
 
 /// Apple's peak limiter has attack, decay, and pre-gain, but no ceiling.
 /// 0.89 is about −1 dBFS on the main mixer when the unit is already limiting to full scale.
@@ -280,7 +281,7 @@ class AudioEngineManager {
         let previousRate = outputSampleRate
         let newRate = hardwareSampleRate()
         let rateChanged = abs(newRate - previousRate) > 0.5
-        print("🔁 AVAudioEngine configuration change at \(newRate) Hz (was \(previousRate))")
+        AppLog.audio("🔁 AVAudioEngine configuration change at \(newRate) Hz (was \(previousRate))")
         if rateChanged {
             installVoiceEngine(sampleRate: newRate)
         } else {
@@ -316,7 +317,7 @@ class AudioEngineManager {
 
         deviceChangeResume?(voiceEngine, outputSampleRate, transport.step, transport.wasPlaying)
         heldTransport = nil
-        print("🔁 Audio configuration recovered at \(outputSampleRate) Hz")
+        AppLog.audio("🔁 Audio configuration recovered at \(outputSampleRate) Hz")
     }
 
     private func startEngineRetrying(epoch: Int) async -> Bool {
@@ -324,7 +325,7 @@ class AudioEngineManager {
         try? await Task.sleep(nanoseconds: 300_000_000)
         guard !Task.isCancelled, epoch == configurationEpoch else { return false }
         if startEngineOnce() { return true }
-        print("❌ Audio engine restart failed at \(outputSampleRate) Hz")
+        AppLog.audio("❌ Audio engine restart failed at \(outputSampleRate) Hz")
         return false
     }
 
@@ -334,10 +335,10 @@ class AudioEngineManager {
         engine.prepare()
         do {
             try engine.start()
-            print("✅ AVAudioEngine started at \(outputSampleRate) Hz")
+            AppLog.audio("✅ AVAudioEngine started at \(outputSampleRate) Hz")
             return true
         } catch {
-            print("❌ Audio engine start failed: \(error)")
+            AppLog.audio("❌ Audio engine start failed: \(error)")
             return false
         }
     }
@@ -571,7 +572,7 @@ class AudioEngineManager {
         
         // Ensure valid format before installing tap
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            print("⚠️ Invalid mixer output format, skipping visualizer tap")
+            AppLog.audio("⚠️ Invalid mixer output format, skipping visualizer tap")
             return
         }
         
@@ -624,7 +625,7 @@ class AudioEngineManager {
         sampleRate: Double
     ) {
         voiceEngine.swapSample(track: index, samples: samples)
-        print("✅ Generated [\(index)] \(name): \(samples.count) frames")
+        AppLog.audio("✅ Generated [\(index)] \(name): \(samples.count) frames")
         markTrackLoaded(index)
     }
 
@@ -634,7 +635,7 @@ class AudioEngineManager {
         loadingProgress = Double(loadedTracks.count) / 8.0
         guard loadedTracks.count == 8 else { return }
         isReady = true
-        print("🎵 Audio engine ready with \(loadedTracks.count) sounds at \(outputSampleRate) Hz")
+        AppLog.audio("🎵 Audio engine ready with \(loadedTracks.count) sounds at \(outputSampleRate) Hz")
         installVisualizerTap()
     }
 
@@ -687,7 +688,7 @@ class AudioEngineManager {
         for index in 0..<8 {
             if trackPresets[index]?.id != presetIDs[index] { continue }
             voiceEngine.swapSample(track: index, samples: buffers[index])
-            print("✅ Regenerated [\(index)] \(names[index]): \(buffers[index].count) frames at \(sampleRate) Hz")
+            AppLog.audio("✅ Regenerated [\(index)] \(names[index]): \(buffers[index].count) frames at \(sampleRate) Hz")
             loadedTracks.insert(index)
             loadingProgress = Double(loadedTracks.count) / 8.0
         }
@@ -701,10 +702,10 @@ class AudioEngineManager {
             }
         }
         let elapsed = Date().timeIntervalSince(started)
-        print("🔁 Resynthesized buffers in \(String(format: "%.3f", elapsed)) s at \(sampleRate) Hz")
+        AppLog.audio("🔁 Resynthesized buffers in \(String(format: "%.3f", elapsed)) s at \(sampleRate) Hz")
         guard loadedTracks.count == 8 else { return }
         isReady = true
-        print("🎵 Audio engine ready with \(loadedTracks.count) sounds at \(sampleRate) Hz")
+        AppLog.audio("🎵 Audio engine ready with \(loadedTracks.count) sounds at \(sampleRate) Hz")
         installVisualizerTap()
     }
     
@@ -859,7 +860,7 @@ class AudioEngineManager {
 
     private func installTrackBuffer(_ samples: [Float], preset: SoundPreset, trackIndex: Int) {
         voiceEngine.swapSample(track: trackIndex, samples: samples)
-        print("🎵 Loaded '\(preset.name)' onto track \(trackIndex)")
+        AppLog.audio("🎵 Loaded '\(preset.name)' onto track \(trackIndex)")
         markTrackLoaded(trackIndex)
     }
     
@@ -925,5 +926,20 @@ nonisolated final class LoadTickets: @unchecked Sendable {
     }
     func get(_ index: Int) -> Int {
         slots.withLock { $0.indices.contains(index) ? $0[index] : -1 }
+    }
+}
+
+
+/// Unified logging instead of print(). Main-actor / background callers only, never the render block.
+nonisolated enum AppLog {
+    private static let audioLogger = Logger(subsystem: "Home.DrumMashine-swistUI", category: "audio")
+    private static let sequencerLogger = Logger(subsystem: "Home.DrumMashine-swistUI", category: "sequencer")
+
+    static func audio(_ message: String) {
+        audioLogger.info("\(message, privacy: .public)")
+    }
+
+    static func sequencer(_ message: String) {
+        sequencerLogger.info("\(message, privacy: .public)")
     }
 }

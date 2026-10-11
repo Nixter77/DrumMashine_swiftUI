@@ -275,7 +275,7 @@ class SequencerEngine {
             frame: audio.renderedFrames,
             ioBufferFrames: audio.renderQuantum
         )
-        print("🔁 Sequencer resumed at step \(step)")
+        AppLog.sequencer("🔁 Sequencer resumed at step \(step)")
     }
     
     // MARK: - Playback Control
