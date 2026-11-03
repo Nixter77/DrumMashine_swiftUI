@@ -108,4 +108,28 @@ struct GrooveCrossStepTests {
         #expect(hits.count == 32, "\(hits.count) onsets")
         #expect(zip(hits, hits.dropFirst()).allSatisfy { $0 < $1 })
     }
+
+    /// P2-3: the offset clamp is [-0.45, +0.5] step, so the latest possible hit of step k
+    /// (+0.5) and the earliest of step k+1 (-0.45) are still 0.05 step apart: never swapped
+    /// and never merged by the monotonic `lastEmitted` guard, even with swing at 100%.
+    @Test func extremeOffsetsKeepStepOrderAtTheClampBoundary() throws {
+        let engine = VoiceEngine(sampleRate: 48_000)
+        var click = [Float](repeating: 0, count: 64)
+        click[0] = 1
+        engine.swapSample(track: 0, samples: click)
+        var snap = kickPattern(bpm: 120, swing: 100)
+        let timing = (0..<16).map { $0 % 2 == 0 ? -5.0 : 5.0 }
+        snap.groove = GrooveSnapshot(timing: timing, velocity: Array(repeating: 1, count: 16),
+                                     randomDepth: 0, trackOn: Array(repeating: true, count: 8), isActive: true)
+        let scheduler = SequencerScheduler(voiceEngine: engine, sampleRate: 48_000)
+        scheduler.replace(snap)
+        scheduler.begin(at: 0, ioBufferFrames: 512, timer: false)
+        let rendered = try drive(engine: engine, scheduler: scheduler, frames: 192_000)
+        let hits = onsets(rendered, threshold: 0.2)
+        let samplesPerStep = 48_000.0 * 60 / 120 / 4
+        // 32 steps, plus step 0 of the third bar pulled 0.45 step early into the window.
+        #expect(hits.count == 33, "\(hits.count) onsets")
+        let gaps = zip(hits, hits.dropFirst()).map { $1 - $0 }
+        #expect(gaps.allSatisfy { Double($0) >= 0.04 * samplesPerStep }, "min gap \(gaps.min() ?? 0)")
+    }
 }
