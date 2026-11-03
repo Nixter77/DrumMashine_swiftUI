@@ -230,7 +230,7 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
 - Light palette in `AppTheme` (tokens read `ThemeStore`), frosted white panels, `AppTheme.hairline` for faint lines.
 - Candy pads with white icons and coloured glow; glossy "jelly" steps in the row colour (brightness = velocity).
 - Glossy round Play/Stop with a breathing glow while playing (off with Reduce Motion), green LED BPM, silver knobs.
-- Not done yet: step flash when the playhead hits it.
+- Step flash (CUT_10): during Play, active audible steps (mute/solo like the scheduler) under the playhead flash in the track colour for ~150 ms (Dark: colour fill + glow; Light: white glow). Drawn only in PlayheadOverlay via per-row anchors; the grid still does not read currentStep. Reduce Motion → static highlight.
 
 ## Groove Quantize (Oct 10, 2026)
 - GROOVE pill in the transport (next to SWING/HUMAN): Чистый = off (exactly the old timing), 10 factory grooves

@@ -88,7 +88,7 @@ struct StepButtonView: View {
         .accessibilityValue(step.isActive ? "on" : "off")
         .accessibilityLabel("Step \(trackIndex + 1) \(column + 1)")
         .accessibilityAddTraits(.isButton)
-        .anchorPreference(key: StepColumnKey.self, value: .bounds) { [column: [$0]] }
+        .anchorPreference(key: StepColumnKey.self, value: .bounds) { [column: [trackIndex: $0]] }
         .onTapGesture {
             withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
                 step.isActive.toggle()
