@@ -5,6 +5,16 @@ import Testing
 /// Old saves omit keys that later gained defaults. Decoding must keep those defaults.
 @MainActor
 struct CodableToleranceTests {
+    @Test func trackPatternAndKitWithoutTheirNameOrPresetStillDecode() throws {
+        let track = try JSONDecoder().decode(SequencerTrack.self, from: Data("{}".utf8))
+        #expect(track.soundPreset.name == "Sound")
+        #expect(track.steps.isEmpty)
+        let pattern = try JSONDecoder().decode(DrumPattern.self, from: Data("{}".utf8))
+        #expect(pattern.name == "Pattern")
+        let kit = try JSONDecoder().decode(DrumKit.self, from: Data(#"{"sounds":[]}"#.utf8))
+        #expect(kit.name == "Kit")
+    }
+
     @Test func soundPresetWithOnlyTheCoreKeysUsesDefaults() throws {
         let id = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let json = """

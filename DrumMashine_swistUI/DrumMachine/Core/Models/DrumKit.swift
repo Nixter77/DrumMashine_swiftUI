@@ -12,7 +12,7 @@ extension DrumKit {
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try container.decode(String.self, forKey: .name)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Kit"
         sounds = try container.decodeIfPresent([SoundPreset].self, forKey: .sounds) ?? []
     }
 }

@@ -22,7 +22,8 @@ extension SequencerTrack {
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        soundPreset = try container.decode(SoundPreset.self, forKey: .soundPreset)
+        soundPreset = try container.decodeIfPresent(SoundPreset.self, forKey: .soundPreset)
+            ?? SoundPreset(id: UUID(), name: "Sound", filename: "", category: .percussion)
         steps = try container.decodeIfPresent([SequencerStep].self, forKey: .steps) ?? []
         isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
         isSolo = try container.decodeIfPresent(Bool.self, forKey: .isSolo) ?? false

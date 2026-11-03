@@ -59,7 +59,7 @@ extension DrumPattern {
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try container.decode(String.self, forKey: .name)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Pattern"
         tracks = try container.decodeIfPresent([SequencerTrack].self, forKey: .tracks) ?? []
         bpm = try container.decodeIfPresent(Double.self, forKey: .bpm) ?? 120
         swing = try container.decodeIfPresent(Double.self, forKey: .swing) ?? 0
