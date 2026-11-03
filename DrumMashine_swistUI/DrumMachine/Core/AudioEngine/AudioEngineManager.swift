@@ -181,7 +181,24 @@ class AudioEngineManager {
     // Visualizer tap
     private var isTapInstalled = false
     
+    /// Frees sample buffers the render thread retired. Swaps also drain, but a session with
+    /// no further swaps would otherwise hold the old buffers until quit.
+    private var retireDrainTask: Task<Void, Never>?
+    static let retireDrainIntervalNanoseconds: UInt64 = 2_000_000_000
+
+    private func startRetireDrain() {
+        retireDrainTask?.cancel()
+        retireDrainTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.retireDrainIntervalNanoseconds)
+                guard let self else { return }
+                self.voiceEngine?.drainRetired()
+            }
+        }
+    }
+
     private init() {
+        startRetireDrain()
         let session = SessionStore.load()
         if let session {
             effectsChain = session.effectsChain
@@ -441,9 +458,31 @@ class AudioEngineManager {
         pendingRoutingTask?.cancel()
         pendingRoutingTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: Self.routingDebounceNanoseconds)
-            guard !Task.isCancelled else { return }
-            self?.flushPendingRouting()
+            guard !Task.isCancelled, let self else { return }
+            await self.rewireWithMasterFade()
         }
+    }
+
+    /// Ramps the master to silence, rewires, restarts, then ramps back, so a running
+    /// graph never drops out abruptly mid-hit (the pause itself is the only gap, and it is silent).
+    static let routingFadeSteps = 8
+    static let routingFadeStepNanoseconds: UInt64 = 2_500_000
+    private func rewireWithMasterFade() async {
+        guard engine.isRunning else { flushPendingRouting(); return }
+        let mixer = engine.mainMixerNode
+        let target = mixer.outputVolume
+        for step in stride(from: Self.routingFadeSteps - 1, through: 0, by: -1) {
+            mixer.outputVolume = target * Float(step) / Float(Self.routingFadeSteps)
+            try? await Task.sleep(nanoseconds: Self.routingFadeStepNanoseconds)
+        }
+        flushPendingRouting()
+        for step in 1...Self.routingFadeSteps {
+            try? await Task.sleep(nanoseconds: Self.routingFadeStepNanoseconds)
+            // A master-volume change during the fade wins over the captured level.
+            let level = masterVolume
+            mixer.outputVolume = level * Float(step) / Float(Self.routingFadeSteps)
+        }
+        mixer.outputVolume = masterVolume
     }
 
     /// Applies a pending order now. Tests call it instead of waiting for the debounce.
@@ -781,6 +820,12 @@ class AudioEngineManager {
     func stop() {
         let fade = Int(outputSampleRate * 0.005)
         voiceEngine.stopAll(fadeFrames: fade)
+        voiceEngine.drainRetired()
+        // Voices fading out now retire their buffers within a few render cycles.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            self?.voiceEngine?.drainRetired()
+        }
     }
     
     // MARK: - Per-Track Volume & Pan
