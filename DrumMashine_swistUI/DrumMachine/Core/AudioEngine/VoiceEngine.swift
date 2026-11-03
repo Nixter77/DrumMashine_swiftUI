@@ -146,6 +146,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
     private var sidechain = SidechainParams()
     private var sidechainEnvelope: SidechainEnvelope
     private var duckGain: Float = 1
+    /// Render-thread only. True once a smooth() pass changed nothing; cleared by setGain.
+    private var gainSettled = false
 
     private let slotPtr: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>
     private let slotCount: UnsafeMutablePointer<Int>
@@ -329,8 +331,10 @@ nonisolated private final class Mixer: @unchecked Sendable {
         let word = sidechainWord.load(ordering: .acquiring)
         sidechain = SidechainParams(packed: word)
         var panPlanned = false
-        for frame in 0..<frameCount {
-            let absolute = blockStart + Int64(frame)
+        var segmentStart = 0
+        while segmentStart < frameCount {
+            // Segment boundary: apply everything due on this frame, control lane first.
+            let absolute = blockStart + Int64(segmentStart)
             drain(controlRing, absolute: absolute, blockStart: blockStart)
             drain(sequencerRing, absolute: absolute, blockStart: blockStart)
             if !panPlanned {
@@ -338,10 +342,18 @@ nonisolated private final class Mixer: @unchecked Sendable {
                 planPan(frameCount: frameCount)
                 panPlanned = true
             }
-            duckGain = sidechainEnvelope.isIdle ? 1 : sidechainEnvelope.next()
-            mix(frame: frame, left: left, right: right)
-            blockPeak = max(blockPeak, abs(left[frame]), abs(right[frame]))
-            smooth()
+            // No command can become due before the next boundary, so the hot loop skips drain.
+            let segmentEnd = min(
+                nextDueFrame(controlRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount),
+                nextDueFrame(sequencerRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount)
+            )
+            for frame in segmentStart..<segmentEnd {
+                duckGain = sidechainEnvelope.isIdle ? 1 : sidechainEnvelope.next()
+                mix(frame: frame, left: left, right: right)
+                blockPeak = max(blockPeak, abs(left[frame]), abs(right[frame]))
+                if !gainSettled { smooth() }
+            }
+            segmentStart = segmentEnd
         }
         let held = Float(bitPattern: peakBits.load(ordering: .relaxed))
         if blockPeak > held {
@@ -379,6 +391,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
             let track = Int(command.track)
             targetGain[track] = command.gain
             targetPan[track] = command.pan
+            gainSettled = false
         case .swap:
             let track = Int(command.track)
             let old = slotPtr[track]
@@ -554,11 +567,29 @@ nonisolated private final class Mixer: @unchecked Sendable {
     }
 
     /// Gain stays a per-frame one-pole (cheap arithmetic, no trig).
+    /// A pass that changes no bit is a fixed point: every later pass would be a no-op too,
+    /// so `gainSettled` skips it until a setGain moves a target (bit-identical output).
     private func smooth() {
+        var changed = false
         for track in 0..<Self.slotCount {
-            smoothGain[track] += gainAlpha * (targetGain[track] - smoothGain[track])
-            if abs(smoothGain[track]) < 1e-15 { smoothGain[track] = 0 }
+            let before = smoothGain[track]
+            var next = before + gainAlpha * (targetGain[track] - before)
+            if abs(next) < 1e-15 { next = 0 }
+            smoothGain[track] = next
+            if next.bitPattern != before.bitPattern { changed = true }
         }
+        if !changed { gainSettled = true }
+    }
+
+    /// First frame after `frame` on which this lane's head command is due, or `frameCount`.
+    /// Mirrors `drain`: a non-trigger head (or a trigger already due) is due on the next frame.
+    private func nextDueFrame(_ ring: CommandRing, after frame: Int, blockStart: Int64, frameCount: Int) -> Int {
+        guard let command = ring.peek() else { return frameCount }
+        guard command.kind == .trigger, command.atSample > blockStart + Int64(frame) else {
+            return min(frame + 1, frameCount)
+        }
+        let due = command.atSample - blockStart
+        return due >= Int64(frameCount) ? frameCount : Int(due)
     }
 
     private func countActive() -> Int {
