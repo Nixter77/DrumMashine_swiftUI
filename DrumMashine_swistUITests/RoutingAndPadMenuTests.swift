@@ -64,6 +64,39 @@ struct EffectRoutingTests {
         audio.flushPendingRouting()
         #expect(audio.connectedChainForTesting().map(ObjectIdentifier.init) == audio.routedNodes(chain.order).map(ObjectIdentifier.init))
     }
+
+    /// The debounced rewire on a running engine must ramp the master back up over real time,
+    /// not jump (the fade task used to cancel itself, so every sleep returned at once).
+    @Test func runningRewireFadesInOverRealTime() async throws {
+        let audio = AudioEngineManager.shared
+        // Engine start is asynchronous after init; give it a moment, then start it directly.
+        for _ in 0..<30 where !audio.isEngineRunningForTesting {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if !audio.isEngineRunningForTesting { try? audio.engine.start() }
+        try #require(audio.isEngineRunningForTesting, "needs a running engine")
+        let saved = audio.effectsChain
+        defer {
+            audio.effectsChain = saved
+            audio.updateEffects()
+            audio.flushPendingRouting()
+        }
+        var chain = saved
+        chain.order = [.distortion, .delay, .reverb, .eq, .compressor]
+        audio.effectsChain = chain
+        // Parallel suites flush routing on the shared engine, and a flush legitimately cancels
+        // a running fade. Retry a few times; with the self-cancel bug every attempt is 0 steps.
+        for _ in 0..<5 {
+            await audio.runFadedRewireForTesting()
+            if audio.lastRoutingFadeInSteps == AudioEngineManager.routingFadeSteps { break }
+        }
+        let duration = try #require(audio.lastRoutingFadeInDuration)
+        let stepNanos = Int64(AudioEngineManager.routingFadeStepNanoseconds)
+        let minimum = Duration.nanoseconds(stepNanos * Int64(AudioEngineManager.routingFadeSteps))
+        #expect(audio.lastRoutingFadeInSteps == AudioEngineManager.routingFadeSteps)
+        #expect(duration >= minimum)
+        #expect(audio.engine.mainMixerNode.outputVolume == audio.masterVolume)
+    }
 }
 
 @MainActor

@@ -182,7 +182,9 @@ class AudioEngineManager {
     private var isTapInstalled = false
     
     /// Frees sample buffers the render thread retired. Swaps also drain, but a session with
-    /// no further swaps would otherwise hold the old buffers until quit.
+    /// no further swaps would otherwise hold the old buffers until quit. The timer only runs
+    /// after a swap or stop() and ends once a pass finds the retire ring empty, so an idle
+    /// app does not wake the main actor every 2 s.
     private var retireDrainTask: Task<Void, Never>?
     static let retireDrainIntervalNanoseconds: UInt64 = 2_000_000_000
 
@@ -191,14 +193,23 @@ class AudioEngineManager {
         retireDrainTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: Self.retireDrainIntervalNanoseconds)
-                guard let self else { return }
-                self.voiceEngine?.drainRetired()
+                guard !Task.isCancelled, let self else { return }
+                let freed = self.voiceEngine?.drainRetired() ?? 0
+                if freed == 0 {
+                    self.retireDrainTask = nil
+                    return
+                }
             }
         }
     }
 
-    private init() {
+    /// Swaps a track buffer and arms the drain timer for the buffer it retires.
+    private func swapVoiceSample(track: Int, samples: [Float]) {
+        voiceEngine.swapSample(track: track, samples: samples)
         startRetireDrain()
+    }
+
+    private init() {
         let session = SessionStore.load()
         if let session {
             effectsChain = session.effectsChain
@@ -468,27 +479,59 @@ class AudioEngineManager {
     static let routingFadeSteps = 8
     static let routingFadeStepNanoseconds: UInt64 = 2_500_000
     private func rewireWithMasterFade() async {
-        guard engine.isRunning else { flushPendingRouting(); return }
+        guard engine.isRunning else { performRewire(); return }
         let mixer = engine.mainMixerNode
         let target = mixer.outputVolume
         for step in stride(from: Self.routingFadeSteps - 1, through: 0, by: -1) {
             mixer.outputVolume = target * Float(step) / Float(Self.routingFadeSteps)
             try? await Task.sleep(nanoseconds: Self.routingFadeStepNanoseconds)
         }
-        flushPendingRouting()
+        // Not flushPendingRouting(): that cancels pendingRoutingTask, which is this task,
+        // and every following sleep would then return at once (0 ms ramp = the click).
+        performRewire()
+        let fadeInStart = ContinuousClock.now
+        var completedSteps = 0
         for step in 1...Self.routingFadeSteps {
-            try? await Task.sleep(nanoseconds: Self.routingFadeStepNanoseconds)
+            do {
+                try await Task.sleep(nanoseconds: Self.routingFadeStepNanoseconds)
+            } catch {
+                break // cancelled (a newer rewire took over): restore the level below
+            }
             // A master-volume change during the fade wins over the captured level.
             let level = masterVolume
             mixer.outputVolume = level * Float(step) / Float(Self.routingFadeSteps)
+            completedSteps = step
         }
         mixer.outputVolume = masterVolume
+        lastRoutingFadeInDuration = ContinuousClock.now - fadeInStart
+        lastRoutingFadeInSteps = completedSteps
+    }
+
+    /// Wall time and slept steps of the last fade-in after a rewire. Test hooks.
+    private(set) var lastRoutingFadeInDuration: Duration?
+    private(set) var lastRoutingFadeInSteps = 0
+
+    /// Runs the faded rewire inside pendingRoutingTask, as the debounce does, and waits
+    /// for it. Test hook.
+    func runFadedRewireForTesting() async {
+        pendingRoutingTask?.cancel()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.rewireWithMasterFade()
+        }
+        pendingRoutingTask = task
+        await task.value
     }
 
     /// Applies a pending order now. Tests call it instead of waiting for the debounce.
     func flushPendingRouting() {
         pendingRoutingTask?.cancel()
         pendingRoutingTask = nil
+        performRewire()
+    }
+
+    /// The rewire itself, without touching pendingRoutingTask (the fade path runs inside it).
+    private func performRewire() {
         let order = EffectsChain.sanitized(effectsChain.order)
         guard let connectedOrder, connectedOrder != order, let format = processingFormat else { return }
         // Disconnecting mid-chain nodes while the IO thread renders can tear the graph,
@@ -663,7 +706,7 @@ class AudioEngineManager {
         name: String,
         sampleRate: Double
     ) {
-        voiceEngine.swapSample(track: index, samples: samples)
+        swapVoiceSample(track: index, samples: samples)
         AppLog.audio("✅ Generated [\(index)] \(name): \(samples.count) frames")
         markTrackLoaded(index)
     }
@@ -726,7 +769,7 @@ class AudioEngineManager {
         guard abs(outputSampleRate - sampleRate) < 0.5 else { return }
         for index in 0..<8 {
             if trackPresets[index]?.id != presetIDs[index] { continue }
-            voiceEngine.swapSample(track: index, samples: buffers[index])
+            swapVoiceSample(track: index, samples: buffers[index])
             AppLog.audio("✅ Regenerated [\(index)] \(names[index]): \(buffers[index].count) frames at \(sampleRate) Hz")
             loadedTracks.insert(index)
             loadingProgress = Double(loadedTracks.count) / 8.0
@@ -737,7 +780,7 @@ class AudioEngineManager {
             }.value
             guard epoch == sampleInstallEpoch else { return }
             if previewPreset?.id == preview.id {
-                voiceEngine.swapSample(track: VoiceEngine.previewTrack, samples: previewSamples)
+                swapVoiceSample(track: VoiceEngine.previewTrack, samples: previewSamples)
             }
         }
         let elapsed = Date().timeIntervalSince(started)
@@ -826,6 +869,7 @@ class AudioEngineManager {
             try? await Task.sleep(nanoseconds: 100_000_000)
             self?.voiceEngine?.drainRetired()
         }
+        startRetireDrain()
     }
     
     // MARK: - Per-Track Volume & Pan
@@ -867,7 +911,7 @@ class AudioEngineManager {
     }
 
     private func playPreview(_ samples: [Float]) {
-        voiceEngine.swapSample(track: VoiceEngine.previewTrack, samples: samples)
+        swapVoiceSample(track: VoiceEngine.previewTrack, samples: samples)
         voiceEngine.trigger(track: VoiceEngine.previewTrack, velocity: 0.85, chokeGroup: -1, atSample: 0)
     }
     
@@ -904,7 +948,7 @@ class AudioEngineManager {
     }
 
     private func installTrackBuffer(_ samples: [Float], preset: SoundPreset, trackIndex: Int) {
-        voiceEngine.swapSample(track: trackIndex, samples: samples)
+        swapVoiceSample(track: trackIndex, samples: samples)
         AppLog.audio("🎵 Loaded '\(preset.name)' onto track \(trackIndex)")
         markTrackLoaded(trackIndex)
     }
