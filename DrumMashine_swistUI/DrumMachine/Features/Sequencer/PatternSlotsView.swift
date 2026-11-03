@@ -5,12 +5,24 @@ struct PatternSlotsView: View {
     private var patternManager: PatternManager { PatternManager.shared }
     @Environment(\.undoManager) private var undoManager
     @State private var showSaveConfirm: Int? = nil
+    @State private var flashToken = 0
     @State private var renameSlot: Int? = nil
     @State private var renameText = ""
 
     private let slotNames = ["A", "B", "C", "D"]
 
     var body: some View {
+        bodyContent
+            // Restarts on every flash, and is cancelled if the view goes away.
+            .task(id: flashToken) {
+                guard showSaveConfirm != nil else { return }
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation { showSaveConfirm = nil }
+            }
+    }
+
+    private var bodyContent: some View {
         HStack(spacing: 8) {
             Text("PAT")
                 .font(.system(.caption2, design: .monospaced).weight(.bold))
@@ -75,9 +87,7 @@ struct PatternSlotsView: View {
         withAnimation(.spring(response: 0.2)) {
             showSaveConfirm = slot
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation { showSaveConfirm = nil }
-        }
+        flashToken &+= 1
     }
 }
 

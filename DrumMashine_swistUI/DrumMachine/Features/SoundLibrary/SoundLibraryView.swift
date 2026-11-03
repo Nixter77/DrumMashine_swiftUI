@@ -17,6 +17,7 @@ struct SoundLibraryView: View {
     @State private var query = ""
     @State private var selectedPreset: SoundPreset? = nil
     @State private var justAssigned: UUID? = nil
+    @State private var flashToken = 0
     @State private var presetPendingRename: SoundPreset?
     @State private var renameDraft = ""
     @State private var importingSample = false
@@ -36,6 +37,17 @@ struct SoundLibraryView: View {
     }
     
     var body: some View {
+        bodyContent
+            // Restarts on every flash, and is cancelled if the view goes away.
+            .task(id: flashToken) {
+                guard justAssigned != nil else { return }
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation { justAssigned = nil }
+            }
+    }
+
+    private var bodyContent: some View {
         VStack(spacing: 0) {
             // ── Header ──
             libraryHeader
@@ -391,7 +403,7 @@ struct SoundLibraryView: View {
                 
                 // Track assignment picker
                 Menu {
-                    ForEach(sequencer.tracks.indices, id: \.self) { idx in
+                    ForEach(Array(sequencer.tracks.enumerated()), id: \.element.id) { idx, _ in
                         Button(action: {
                             assignPreset(preset, toTrack: idx)
                         }) {
@@ -433,9 +445,7 @@ struct SoundLibraryView: View {
         withAnimation(.spring(response: 0.3)) {
             justAssigned = id
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation { justAssigned = nil }
-        }
+        flashToken &+= 1
     }
 
     private func show(_ next: LibraryPage) {

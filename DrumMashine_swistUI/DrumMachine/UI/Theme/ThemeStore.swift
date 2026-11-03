@@ -12,17 +12,18 @@ enum AppThemeStyle: String, CaseIterable, Identifiable {
 }
 
 /// Holds the chosen style. AppTheme tokens read `ThemeStore.style` so call sites stay unchanged.
-/// `ThemedRootView` and `MainLayoutView` observe `shared` and key the panels on `style`, so a switch
-/// applies live without a restart.
-final class ThemeStore: ObservableObject {
+/// It is `@Observable`, so any view body that reads a token (through `ThemeStore.style`) is
+/// tracked and redraws on a switch; no `.id(style)` rebuild of the panels is needed.
+@Observable
+final class ThemeStore {
     static let shared = ThemeStore()
     static let defaultsKey = "appThemeStyle"
 
-    @Published var style: AppThemeStyle {
+    var style: AppThemeStyle {
         didSet { defaults.set(style.rawValue, forKey: Self.defaultsKey) }
     }
 
-    private let defaults: UserDefaults
+    @ObservationIgnored private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

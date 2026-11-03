@@ -12,7 +12,7 @@ struct MainLayoutView: View {
     private var audioManager: AudioEngineManager { AudioEngineManager.shared }
     /// AppTheme tokens are static reads, so a theme switch rebuilds the panels below via `.id`.
     /// The engine is @State of this view and is not part of that subtree, so playback continues.
-    @ObservedObject private var theme = ThemeStore.shared
+    private let theme = ThemeStore.shared
 
     /// The window passes `AppSequencer.shared`. Snapshots and previews get a private engine.
     init(
@@ -105,7 +105,6 @@ struct MainLayoutView: View {
             isPresented: $libraryOpen,
             sequencer: sequencerEngine
         ))
-        .id(theme.style)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

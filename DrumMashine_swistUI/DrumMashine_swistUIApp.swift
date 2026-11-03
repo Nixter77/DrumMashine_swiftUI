@@ -11,7 +11,7 @@ import SwiftUI
 @main
 struct DrumMashine_swistUIApp: App {
     @NSApplicationDelegateAdaptor(DrumMachineAppDelegate.self) private var appDelegate
-    @StateObject private var theme = ThemeStore.shared
+    @Bindable private var theme = ThemeStore.shared
 
     var body: some Scene {
         WindowGroup {
@@ -46,15 +46,14 @@ struct DrumMashine_swistUIApp: App {
 /// Observes the theme inside the window. The App's own state does not re-run the content of a
 /// window that is already open, so the switch has to be observed here to apply live.
 struct ThemedRootView: View {
-    @ObservedObject private var theme = ThemeStore.shared
+    private let theme = ThemeStore.shared
 
     var body: some View {
         MainLayoutView(sequencer: AppSequencer.shared)
             .background(AppTheme.background)
             .environment(\.appThemeStyle, theme.style)
             .preferredColorScheme(theme.style.isLight ? .light : .dark)
-            // Outside MainLayoutView's `.id(theme.style)`: a theme switch must not flush
-            // all five stores synchronously; only closing the window does.
+            // Only closing the window flushes the five stores, never a theme switch.
             .onDisappear {
                 SessionStore.flush()
                 PatternManager.shared.flushSave()

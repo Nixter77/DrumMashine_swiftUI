@@ -40,15 +40,25 @@ struct ThemeStoreTests {
 
     @Test func toggleNotifiesObservers() {
         let store = ThemeStore(defaults: freshDefaults())
-        var seen: [AppThemeStyle] = []
-        let sub = store.$style.dropFirst().sink { seen.append($0) }
-        var willChange = 0
-        let sub2 = store.objectWillChange.sink { willChange += 1 }
+        var changes = 0
+        func track() {
+            withObservationTracking { _ = store.style } onChange: { changes += 1 }
+        }
+        track()
         store.toggle()
+        #expect(store.style == .studioLight)
+        track()
         store.toggle()
-        #expect(seen == [.studioLight, .dark])
-        #expect(willChange == 2)
-        sub.cancel(); sub2.cancel()
+        #expect(store.style == .dark)
+        #expect(changes == 2)
+        // Token reads through the static accessor are tracked too, so views redraw without `.id`.
+        let shared = ThemeStore.shared
+        let original = shared.style
+        defer { shared.style = original }
+        var tokenChanges = 0
+        withObservationTracking { _ = AppTheme.accent } onChange: { tokenChanges += 1 }
+        shared.toggle()
+        #expect(tokenChanges == 1)
     }
 
     @Test func tokensFollowTheSharedStyle() {

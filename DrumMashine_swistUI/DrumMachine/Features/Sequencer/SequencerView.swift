@@ -140,7 +140,7 @@ struct SequencerTracksView: View {
 
     var body: some View {
         VStack(spacing: AppLayout.sequencerTrackSpacing) {
-            ForEach(sequencer.tracks.indices, id: \.self) { index in
+            ForEach(Array(sequencer.tracks.enumerated()), id: \.element.id) { index, _ in
                 SequencerRowView(
                     track: $sequencer.tracks[index],
                     trackIndex: index,

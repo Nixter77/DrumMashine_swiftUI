@@ -7,7 +7,7 @@ struct TransportBarView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var kitNameDraft = ""
     @State private var showingKitSave = false
-    @ObservedObject private var theme = ThemeStore.shared
+    private let theme = ThemeStore.shared
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
