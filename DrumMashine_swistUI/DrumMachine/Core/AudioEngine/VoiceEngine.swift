@@ -95,7 +95,9 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
         mixer.swapSample(track: track, samples: samples)
     }
 
-    func drainRetired() {
+    /// Returns how many retired buffers were freed.
+    @discardableResult
+    func drainRetired() -> Int {
         mixer.drainRetired()
     }
 }
@@ -291,11 +293,14 @@ nonisolated private final class Mixer: @unchecked Sendable {
         ))
     }
 
-    func drainRetired() {
+    @discardableResult
+    func drainRetired() -> Int {
+        var freed = 0
         while true {
             let tail = retiredTail.load(ordering: .relaxed)
             let head = retiredHead.load(ordering: .acquiring)
-            if tail == head { return }
+            if tail == head { return freed }
+            freed += 1
             let item = retired[tail & retireMask]
             if let ptr = item.ptr, item.count > 0 {
                 ptr.deinitialize(count: item.count)
