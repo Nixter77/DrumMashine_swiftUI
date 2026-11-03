@@ -17,36 +17,8 @@ struct SequencerView: View {
                 .padding(.vertical, 3)
             
             // ── Step Number Header ──
-            HStack(spacing: 4) {
-                Color.clear.frame(width: AppLayout.sequencerTrackWidth)
-                
-                let activeSteps = sequencer.stepCount.rawValue
-                let beatCount = activeSteps / 4
-                
-                ForEach(0..<beatCount, id: \.self) { beat in
-                    HStack(spacing: 3) {
-                        ForEach(0..<4, id: \.self) { sub in
-                            let stepNum = beat * 4 + sub
-                            Text("\(stepNum + 1)")
-                                .font(.system(.caption, design: .monospaced).weight(.medium))
-                                .foregroundColor(sub == 0 ? AppTheme.textSecondary : AppTheme.textTertiary)
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .padding(.horizontal, 2)
-                    .overlay(
-                        Rectangle()
-                            .fill(AppTheme.accent.opacity(0.12))
-                            .frame(width: 1)
-                            .padding(.vertical, 2),
-                        alignment: .leading
-                    )
-                }
-                
-                Color.clear.frame(width: AppLayout.sequencerMuteWidth)
-                Color.clear.frame(width: AppLayout.sequencerVolumeWidth)
-                Color.clear.frame(width: AppLayout.sequencerPanWidth)
-            }
+            // Reads groove settings and step count only, never the playhead.
+            SequencerStepHeader(sequencer: sequencer)
             .frame(height: 16)
             .padding(.horizontal, 8)
             
@@ -386,5 +358,60 @@ struct SequencerRowView: View {
     private var padColor: Color {
         guard trackIndex < AppTheme.padColors.count else { return AppTheme.accent }
         return AppTheme.padColors[trackIndex]
+    }
+}
+
+/// CUT_11: step numbers plus groove offset ticks. Reads only stepCount, grooveSettings and activeGroove.
+struct SequencerStepHeader: View {
+    let sequencer: SequencerEngine
+
+    var body: some View {
+        let activeSteps = sequencer.stepCount.rawValue
+        let beatCount = activeSteps / 4
+        let offsets = GrooveTicks.offsets(template: sequencer.activeGroove,
+                                          settings: sequencer.grooveSettings,
+                                          stepCount: activeSteps)
+        return HStack(spacing: 4) {
+            Color.clear.frame(width: AppLayout.sequencerTrackWidth)
+
+            ForEach(0..<beatCount, id: \.self) { beat in
+                HStack(spacing: 3) {
+                    ForEach(0..<4, id: \.self) { sub in
+                        let stepNum = beat * 4 + sub
+                        Text("\(stepNum + 1)")
+                            .font(.system(.caption, design: .monospaced).weight(.medium))
+                            .foregroundColor(sub == 0 ? AppTheme.textSecondary : AppTheme.textTertiary)
+                            .frame(maxWidth: .infinity)
+                            .overlay(alignment: .bottom) { tick(stepNum < offsets.count ? offsets[stepNum] : 0) }
+                    }
+                }
+                .padding(.horizontal, 2)
+                .overlay(
+                    Rectangle()
+                        .fill(AppTheme.accent.opacity(0.12))
+                        .frame(width: 1)
+                        .padding(.vertical, 2),
+                    alignment: .leading
+                )
+            }
+
+            Color.clear.frame(width: AppLayout.sequencerMuteWidth)
+            Color.clear.frame(width: AppLayout.sequencerVolumeWidth)
+            Color.clear.frame(width: AppLayout.sequencerPanWidth)
+        }
+    }
+
+    /// Thin 1×4 pt tick under the digit, shifted by offset × cell width. Hidden when |offset| < 0.01.
+    @ViewBuilder private func tick(_ offset: Double) -> some View {
+        if abs(offset) >= GrooveTicks.minVisible {
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(AppTheme.accent)
+                    .frame(width: 1, height: 4)
+                    .position(x: geo.size.width / 2 + offset * geo.size.width, y: 2)
+            }
+            .frame(height: 4)
+            .allowsHitTesting(false)
+        }
     }
 }

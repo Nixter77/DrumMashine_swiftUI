@@ -239,7 +239,7 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
   "Извлечь из паттерна", "Запечь в паттерн" (velocity only), "Чистый".
 - Non-destructive: applied in SequencerScheduler at playback; Swing/Humanize stack on top. Saved in the session.
 - User grooves: user_grooves.json next to the patterns. Undo for groove choice, track switches, extract and bake.
-- Not done: groove offset ticks in the sequencer header.
+- Done (CUT_11): groove offset ticks in the sequencer header — 1×4pt accent tick under each step number, shifted by GrooveSnapshot timing × cell width (16/32 via i % 16); Clean/STRENGTH 0/TIMING 0 → no ticks; header (SequencerStepHeader) reads only grooveSettings/activeGroove/stepCount, height 16pt unchanged; audio untouched. Tests: GrooveTicksTests.
 
 ## Compressor (Oct 10, 2026)
 - COMP module at the end of the effects rack: Apple DynamicsProcessor between EQ and the limiter.
