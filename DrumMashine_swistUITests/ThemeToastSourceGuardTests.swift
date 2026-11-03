@@ -10,7 +10,7 @@ struct ThemeToastSourceGuardTests {
     private func swiftFiles() throws -> [URL] {
         let e = FileManager.default.enumerator(at: Self.appRoot, includingPropertiesForKeys: nil)
         var out: [URL] = []
-        while let u = e?.nextObject() as? URL where u.pathExtension == "swift" { out.append(u) }
+        while let u = e?.nextObject() as? URL { if u.pathExtension == "swift" { out.append(u) } }
         return out
     }
 
@@ -25,7 +25,11 @@ struct ThemeToastSourceGuardTests {
     @Test func noThemeIdRebuildAnywhere() throws {
         var hits: [String] = []
         for f in try swiftFiles() {
+            // Code lines only; doc comments may mention the old pattern.
             let s = try String(contentsOf: f, encoding: .utf8)
+                .split(separator: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
             for needle in [".id(theme", ".id(ThemeStore", ".id(style"] where s.contains(needle) {
                 hits.append("\(f.lastPathComponent): \(needle)")
             }
