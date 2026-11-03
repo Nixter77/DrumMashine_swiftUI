@@ -10,8 +10,8 @@ struct MainLayoutView: View {
     private let showsLayoutForSnapshot: Bool
     private let snapshotShowsPatterns: Bool
     private var audioManager: AudioEngineManager { AudioEngineManager.shared }
-    /// AppTheme tokens are static reads, so a theme switch rebuilds the panels below via `.id`.
-    /// The engine is @State of this view and is not part of that subtree, so playback continues.
+    /// `ThemeStore` is `@Observable`; AppTheme token reads go through it, so views that read a token
+    /// redraw on a theme switch. No `.id(theme.style)` rebuild, so panel state and playback persist.
     private let theme = ThemeStore.shared
 
     /// The window passes `AppSequencer.shared`. Snapshots and previews get a private engine.
