@@ -156,52 +156,107 @@ struct SequencerTracksView: View {
 /// Reads the playhead so the grid that publishes the anchors does not.
 struct PlayheadOverlay: View {
     var sequencer: SequencerEngine
-    var anchors: [Int: [Anchor<CGRect>]]
+    var anchors: [Int: [Int: Anchor<CGRect>]]
 
     var body: some View {
+        let step = sequencer.currentStep
+        let playing = sequencer.isPlaying
         PlayheadCursor(
             anchors: anchors,
-            step: sequencer.currentStep,
-            isPlaying: sequencer.isPlaying
+            step: step,
+            isPlaying: playing,
+            flashedRows: playing ? StepFlash.flashedRows(tracks: sequencer.tracks, step: step) : []
         )
     }
 }
 
 /// One column over the current step. Buttons publish their frames and do not read the playhead.
 struct PlayheadCursor: View {
-    var anchors: [Int: [Anchor<CGRect>]]
+    var anchors: [Int: [Int: Anchor<CGRect>]]
     var step: Int
     var isPlaying: Bool
+    var flashedRows: [Int] = []
 
     var body: some View {
         GeometryReader { proxy in
             if isPlaying, let column = anchors[step], !column.isEmpty {
-                let rects = column.map { proxy[$0] }
+                let rects = column.values.map { proxy[$0] }
                 let minX = rects.map(\.minX).min() ?? 0
                 let maxX = rects.map(\.maxX).max() ?? 0
                 let minY = rects.map(\.minY).min() ?? 0
                 let maxY = rects.map(\.maxY).max() ?? 0
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(AppTheme.hairline.opacity(0.9), lineWidth: 2)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(AppTheme.hairline.opacity(0.14)))
-                    .frame(width: max(0, maxX - minX), height: max(0, maxY - minY))
-                    .position(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
-                    .allowsHitTesting(false)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(AppTheme.hairline.opacity(0.9), lineWidth: 2)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(AppTheme.hairline.opacity(0.14)))
+                        .frame(width: max(0, maxX - minX), height: max(0, maxY - minY))
+                        .position(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+                    ForEach(flashedRows, id: \.self) { row in
+                        if let a = column[row] {
+                            StepFlashCell(rect: proxy[a], color: Self.color(row), step: step)
+                        }
+                    }
+                }
+                .allowsHitTesting(false)
             }
         }
         .allowsHitTesting(false)
     }
+
+    static func color(_ row: Int) -> Color {
+        row < AppTheme.padColors.count ? AppTheme.padColors[row] : AppTheme.accent
+    }
 }
 
+/// CUT_10 IN-3: short flash over one active step; restarts on every step change.
+struct StepFlashCell: View {
+    var rect: CGRect
+    var color: Color
+    var step: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var lit = false
+
+    static let duration: Double = 0.15
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: AppTheme.cornerRadiusSmall + 2, style: .continuous)
+        Group {
+            if ThemeStore.isLight {
+                shape.fill(Color.white.opacity(0.6))
+                    .shadow(color: .white.opacity(0.9), radius: 6)
+                    .shadow(color: color.opacity(0.5), radius: 4)
+            } else {
+                shape.fill(color.opacity(0.35))
+                    .shadow(color: color.opacity(0.8), radius: 6)
+            }
+        }
+        .opacity(reduceMotion ? 0.7 : (lit ? 1 : 0))
+        .frame(width: rect.width, height: rect.height)
+        .position(x: rect.midX, y: rect.midY)
+        .allowsHitTesting(false)
+        .onAppear(perform: fire)
+        .onChange(of: step) { fire() }
+    }
+
+    private func fire() {
+        guard !reduceMotion else { return }
+        lit = true
+        Task { @MainActor in
+            withAnimation(.easeOut(duration: Self.duration)) { lit = false }
+        }
+    }
+}
+
+/// [column: [row: anchor]] — row = trackIndex.
 struct StepColumnKey: PreferenceKey {
-    static var defaultValue: [Int: [Anchor<CGRect>]] = [:]
+    static var defaultValue: [Int: [Int: Anchor<CGRect>]] = [:]
 
     static func reduce(
-        value: inout [Int: [Anchor<CGRect>]],
-        nextValue: () -> [Int: [Anchor<CGRect>]]
+        value: inout [Int: [Int: Anchor<CGRect>]],
+        nextValue: () -> [Int: [Int: Anchor<CGRect>]]
     ) {
-        for (column, anchors) in nextValue() {
-            value[column, default: []].append(contentsOf: anchors)
+        for (column, rows) in nextValue() {
+            value[column, default: [:]].merge(rows) { _, new in new }
         }
     }
 }
