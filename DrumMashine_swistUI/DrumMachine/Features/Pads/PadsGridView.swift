@@ -33,7 +33,7 @@ struct PadsGridView: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(0..<8, id: \.self) { index in
                     DrumPadView(pad: pads[index], padIndex: index) { velocity in
-                        AudioEngineManager.shared.trigger(trackIndex: index, velocity: velocity)
+                        AudioEngineManager.shared.trigger(trackIndex: index, velocity: velocity, chokeGroup: padChokeGroup(track: index))
                         if let seq = sequencer {
                             Task { @MainActor in
                                 seq.recordPadHit(trackIndex: index, velocity: velocity)
@@ -176,6 +176,12 @@ struct PadsGridView: View {
     private func chokeBadge(track index: Int) -> String? {
         guard let sequencer, sequencer.tracks.indices.contains(index) else { return nil }
         return ChokeGroupOption(preset: sequencer.tracks[index].soundPreset.chokeGroup).badge
+    }
+
+    /// CUT_14: live tap chokes like the sequencer (nil = Off).
+    private func padChokeGroup(track index: Int) -> Int? {
+        guard let sequencer, sequencer.tracks.indices.contains(index) else { return nil }
+        return PadTriggerChoke.group(for: sequencer.tracks[index].soundPreset)
     }
 
     private static func libraryPreset(id: UUID) -> SoundPreset? {
