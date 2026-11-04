@@ -250,13 +250,19 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
 
 ## Choke-group UI (Nov 4, 2026)
 - Done (CUT_12): choke-group UI (picker + pad badge). Sound editor row «Choke» Off/1/2/3/4 writes `soundPreset.chokeGroup` through the existing PadsGridView binding (no new store); out-of-range values are shown as-is. Pad shows a C1…C4 capsule (top-right, no hit-testing) when the preset has a group. Choke-only edits skip the sample reload (sequencer reads the group per hit via the snapshot). Core untouched. Tests: ChokeGroupOptionTests.
-- Known limit: live pad taps do not choke (PadsGridView calls `trigger` without a choke group); sequencer only. Separate CUT.
+- ~~Known limit: live pad taps do not choke~~ — fixed in CUT_14.
 
 ## Choke Off (Nov 4, 2026, CUT_13)
 - Done (CUT_13): choke Off = Off (fallback map removed). `SequencerEngine` takes choke only from `soundPreset.chokeGroup`; nil → -1 on every track. Tests: `ChokeOffTests` (5).
 - Audit: all 12 factory hats carry `choke: 1` explicitly (FactoryPresets CH 808/909/Acoustic/Lo-Fi/Trap Tick, OH 808/909/Acoustic/Lo-Fi/Half; AcousticKit Real Hat Closed/Open). Factory rides (5 + Real Ride) have no group → Off (they used to sit in group 1 only via the track-5 fallback). No data edits.
 - Behavior change: base-library hats in `SoundLibraryManager` (HH Closed, HH Open, HH Pedal, … HH Electronic) have no group, so on track 2 they no longer choke (before, track 2 HIHAT and track 5 RIDE shared group 1 via fallback). Not changed here (file outside CUT_13 scope).
 - Behavior change: saved user projects with a hat whose `chokeGroup` is nil stop choking. No migration in this CUT; set C1 in the picker, or a separate CUT.
-- Known limit (unchanged): live pad taps do not choke; sequencer only.
+- ~~Known limit: live pad taps do not choke~~ — fixed in CUT_14.
 - AC-5 (listen C1 vs Off): DEFER — no Mac GUI session for Eng.
 - Test log: `qa/cut13/test-2026-11-04-cut13.log` (231 passed, 0 failed, `~/.drum_dd`).
+
+## Done (CUT_14): live pad choke (tap = sequencer semantics)
+- PadsGridView tap passes `PadTriggerChoke.group(for: tracks[index].soundPreset)` to `AudioEngineManager.trigger(chokeGroup:)`; nil = Off (-1). Core untouched.
+- LivePadChokeTests (4): group 1/nil/4 mapping + parity with SequencerEngine snapshot for nil/1/3. Tests 235/0 (`~/.drum_dd`), log `qa/cut14/`.
+- AC-5 listen: DEFER (no Mac GUI session for Eng).
+- KEEP ME IN: library hats without a group and old projects with nil on hats do not choke on tap either (same as sequencer). CUT_15 candidates. MIDI/keyboard/preview triggers unchanged (no choke).
