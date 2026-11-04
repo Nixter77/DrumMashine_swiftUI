@@ -250,5 +250,13 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
 
 ## Choke-group UI (Nov 4, 2026)
 - Done (CUT_12): choke-group UI (picker + pad badge). Sound editor row «Choke» Off/1/2/3/4 writes `soundPreset.chokeGroup` through the existing PadsGridView binding (no new store); out-of-range values are shown as-is. Pad shows a C1…C4 capsule (top-right, no hit-testing) when the preset has a group. Choke-only edits skip the sample reload (sequencer reads the group per hit via the snapshot). Core untouched. Tests: ChokeGroupOptionTests.
-- Known limit: «Off» = nil, but SequencerEngine's fallback map `[2: 1, 5: 1]` still puts HIHAT and RIDE in group 1 when the preset is nil; the badge shows only the preset value. Real Off needs a separate CUT (Core).
 - Known limit: live pad taps do not choke (PadsGridView calls `trigger` without a choke group); sequencer only. Separate CUT.
+
+## Choke Off (Nov 4, 2026, CUT_13)
+- Done (CUT_13): choke Off = Off (fallback map removed). `SequencerEngine` takes choke only from `soundPreset.chokeGroup`; nil → -1 on every track. Tests: `ChokeOffTests` (5).
+- Audit: all 12 factory hats carry `choke: 1` explicitly (FactoryPresets CH 808/909/Acoustic/Lo-Fi/Trap Tick, OH 808/909/Acoustic/Lo-Fi/Half; AcousticKit Real Hat Closed/Open). Factory rides (5 + Real Ride) have no group → Off (they used to sit in group 1 only via the track-5 fallback). No data edits.
+- Behavior change: base-library hats in `SoundLibraryManager` (HH Closed, HH Open, HH Pedal, … HH Electronic) have no group, so on track 2 they no longer choke (before, track 2 HIHAT and track 5 RIDE shared group 1 via fallback). Not changed here (file outside CUT_13 scope).
+- Behavior change: saved user projects with a hat whose `chokeGroup` is nil stop choking. No migration in this CUT; set C1 in the picker, or a separate CUT.
+- Known limit (unchanged): live pad taps do not choke; sequencer only.
+- AC-5 (listen C1 vs Off): DEFER — no Mac GUI session for Eng.
+- Test log: `qa/cut13/test-2026-11-04-cut13.log` (231 passed, 0 failed, `~/.drum_dd`).
