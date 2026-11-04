@@ -7,6 +7,8 @@ struct DrumPadView: View {
     var onLongPress: (() -> Void)? = nil
     /// Sound menu shown from the ≡ icon and the right-click menu.
     var soundMenu: (() -> AnyView)? = nil
+    /// CUT_12: "C1"…"C4" from the track preset's choke group; nil hides the badge.
+    var chokeBadge: String? = nil
     
     @State private var isPressed: Bool = false
     @State private var rippleScale: CGFloat = 0
@@ -115,6 +117,22 @@ struct DrumPadView: View {
                 }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if let chokeBadge {
+                Text(chokeBadge)
+                    .font(.system(.caption2, design: .monospaced).weight(.bold))
+                    .foregroundColor(ThemeStore.isLight ? Color.white : padColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule().fill(ThemeStore.isLight ? padColor.opacity(0.85) : AppTheme.surfaceElevated.opacity(0.85))
+                    )
+                    .overlay(Capsule().stroke(padColor.opacity(ThemeStore.isLight ? 0 : 0.5), lineWidth: 1))
+                    .padding(6)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("pad.chokeBadge.\(padIndex)")
+            }
+        }
         .scaleEffect(isPressed ? (ThemeStore.isLight ? 0.95 : 0.92) : 1.0)
         .animation(.spring(response: 0.15, dampingFraction: 0.5), value: isPressed)
         .overlay(
@@ -170,5 +188,14 @@ struct DrumPadView: View {
         .onChange(of: isLongPressing) { _, newVal in
             if !newVal { longPressProgress = 0 }
         }
+    }
+}
+
+extension DrumPadView {
+    /// Sets `chokeBadge` after the trailing-closure init.
+    func withChokeBadge(_ badge: String?) -> DrumPadView {
+        var copy = self
+        copy.chokeBadge = badge
+        return copy
     }
 }

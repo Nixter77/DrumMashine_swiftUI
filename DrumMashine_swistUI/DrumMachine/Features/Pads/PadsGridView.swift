@@ -46,6 +46,7 @@ struct PadsGridView: View {
                     } soundMenu: {
                         AnyView(soundMenu(track: index))
                     }
+                    .withChokeBadge(chokeBadge(track: index))
                     .dropDestination(for: URL.self) { urls, _ in
                         guard let url = urls.first, let sequencer else { return false }
                         let track = index
@@ -105,8 +106,13 @@ struct PadsGridView: View {
                 }
             }
             .frame(minWidth: 420, idealWidth: 470, maxWidth: 520)
-            .onChange(of: sequencer?.tracks[idx].soundPreset) { _, updated in
+            .onChange(of: sequencer?.tracks[idx].soundPreset) { previous, updated in
                 guard let updated else { return }
+                // Choke group is read by the sequencer per hit; it does not change the buffer.
+                if var previous {
+                    previous.chokeGroup = updated.chokeGroup
+                    if previous == updated { return }
+                }
                 scheduleSoundReload(track: idx, preset: updated)
             }
         }
@@ -165,6 +171,11 @@ struct PadsGridView: View {
                 }
             }
         }
+    }
+
+    private func chokeBadge(track index: Int) -> String? {
+        guard let sequencer, sequencer.tracks.indices.contains(index) else { return nil }
+        return ChokeGroupOption(preset: sequencer.tracks[index].soundPreset.chokeGroup).badge
     }
 
     private static func libraryPreset(id: UUID) -> SoundPreset? {

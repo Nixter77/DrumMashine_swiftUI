@@ -247,3 +247,8 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
   RELEASE (10..1000 ms), GAIN (makeup 0..20 dB). Parameters are only re-sent when they change.
 - Presets: Gentle, Glue, Punch, Snap, Squash, Smash. Scenes: Club = Glue, Lo-Fi Tape = Squash, Industrial = Smash.
 - Saved in the session / scenes / .drumproj (old files load with the compressor off).
+
+## Choke-group UI (Nov 4, 2026)
+- Done (CUT_12): choke-group UI (picker + pad badge). Sound editor row «Choke» Off/1/2/3/4 writes `soundPreset.chokeGroup` through the existing PadsGridView binding (no new store); out-of-range values are shown as-is. Pad shows a C1…C4 capsule (top-right, no hit-testing) when the preset has a group. Choke-only edits skip the sample reload (sequencer reads the group per hit via the snapshot). Core untouched. Tests: ChokeGroupOptionTests.
+- Known limit: «Off» = nil, but SequencerEngine's fallback map `[2: 1, 5: 1]` still puts HIHAT and RIDE in group 1 when the preset is nil; the badge shows only the preset value. Real Off needs a separate CUT (Core).
+- Known limit: live pad taps do not choke (PadsGridView calls `trigger` without a choke group); sequencer only. Separate CUT.

@@ -98,6 +98,8 @@ struct PadADSREditorView: View {
             Divider()
                 .overlay(Color.gray.opacity(0.2))
             
+            chokeRow
+
             HStack(spacing: 16) {
                 Spacer()
                 
@@ -299,6 +301,28 @@ struct PadADSREditorView: View {
                 lofi.downsample = nil
             }
             synth.lofi = lofi
+        }
+    }
+
+    /// CUT_12: choke group picker, writes `preset.chokeGroup` through the existing binding.
+    private var chokeRow: some View {
+        let current = ChokeGroupOption(preset: preset.chokeGroup)
+        return HStack(spacing: 8) {
+            Text("Choke")
+                .font(.system(.caption2, design: .monospaced).weight(.bold))
+                .foregroundColor(padColor)
+                .frame(width: 52, alignment: .leading)
+            Picker("Choke", selection: Binding(
+                get: { ChokeGroupOption(preset: preset.chokeGroup) },
+                set: { preset.chokeGroup = $0.presetValue }
+            )) {
+                ForEach(ChokeGroupOption.options(including: current), id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityIdentifier("soundEditor.chokePicker")
         }
     }
 
