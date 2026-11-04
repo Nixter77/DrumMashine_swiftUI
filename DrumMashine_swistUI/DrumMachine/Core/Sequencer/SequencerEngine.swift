@@ -188,10 +188,6 @@ class SequencerEngine {
     private let tapClock = ContinuousClock()
     private var tapOrigin: ContinuousClock.Instant?
     
-    // Choke group map (per sound category)
-    // HiHat closed (index 2) and Ride (index 5) are in group 1
-    private let chokeGroups: [Int: Int] = [2: 1, 5: 1]
-    
     /// `session` nil, or a session with no tracks, uses the library defaults. Playback stays stopped.
     init(session: SessionState? = nil) {
         let audio = AudioEngineManager.shared
@@ -344,7 +340,7 @@ class SequencerEngine {
                 isSolo: track.isSolo,
                 volume: track.volume,
                 pan: track.pan,
-                chokeGroup: track.soundPreset.chokeGroup ?? chokeGroups[index] ?? -1
+                chokeGroup: track.soundPreset.chokeGroup ?? -1
             )
         }
         scheduler.replace(PatternSnapshot(
