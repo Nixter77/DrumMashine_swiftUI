@@ -117,37 +117,3 @@ private func drawOutputMeter(label: String, level: Float, rect: CGRect, context:
         context.fill(Path(roundedRect: segment, cornerRadius: 1), with: .color(color))
     }
 }
-
-// MARK: - Output Meter Bar (segmented LED style)
-struct OutputMeterBar: View {
-    var level: Float
-    let label: String
-    
-    private let segments = 20
-    
-    var body: some View {
-        HStack(spacing: 3) {
-            Text(label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(AppTheme.textTertiary)
-                .frame(width: 10)
-            
-            HStack(spacing: 1.5) {
-                ForEach(0..<segments, id: \.self) { i in
-                    let threshold = Float(i) / Float(segments)
-                    let isLit = level > threshold
-                    let isRed = i >= Int(Float(segments) * 0.85)
-                    let isYellow = i >= Int(Float(segments) * 0.65)
-                    
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(
-                            isLit
-                                ? (isRed ? AppTheme.accentMute : (isYellow ? AppTheme.accentWarning : AppTheme.accentSuccess))
-                                : AppTheme.hairline.opacity(0.06)
-                        )
-                        .frame(height: 6)
-                }
-            }
-        }
-    }
-}

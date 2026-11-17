@@ -212,82 +212,11 @@ struct PadADSREditorView: View {
         )
     }
 
-    private func editSynth(_ body: (inout SynthParams) -> Void) {
-        var synth = preset.synth ?? SynthParams()
-        body(&synth)
-        preset.synth = synth
-    }
-
-    private func editKick(_ body: (inout SynthParams.Kick) -> Void) {
-        editSynth { synth in
-            var kick = synth.kick ?? SynthParams.Kick()
-            body(&kick)
-            synth.kick = kick
-        }
-    }
-
-    private func editSnare(_ body: (inout SynthParams.Snare) -> Void) {
-        editSynth { synth in
-            var snare = synth.snare ?? SynthParams.Snare()
-            body(&snare)
-            synth.snare = snare
-        }
-    }
-
-    private func editHat(_ body: (inout SynthParams.Hat) -> Void) {
-        editSynth { synth in
-            var hat = synth.hat ?? SynthParams.Hat()
-            body(&hat)
-            synth.hat = hat
-        }
-    }
-
-    private func editClap(_ body: (inout SynthParams.Clap) -> Void) {
-        editSynth { synth in
-            var clap = synth.clap ?? SynthParams.Clap()
-            body(&clap)
-            synth.clap = clap
-        }
-    }
-
-    private func editTom(_ body: (inout SynthParams.Tom) -> Void) {
-        editSynth { synth in
-            var tom = synth.tom ?? SynthParams.Tom()
-            body(&tom)
-            synth.tom = tom
-        }
-    }
-
-    private func editRide(_ body: (inout SynthParams.Ride) -> Void) {
-        editSynth { synth in
-            var ride = synth.ride ?? SynthParams.Ride()
-            body(&ride)
-            synth.ride = ride
-        }
-    }
-
-    private func editCrash(_ body: (inout SynthParams.Crash) -> Void) {
-        editSynth { synth in
-            var crash = synth.crash ?? SynthParams.Crash()
-            body(&crash)
-            synth.crash = crash
-        }
-    }
-
-    private func editPerc(_ body: (inout SynthParams.Perc) -> Void) {
-        editSynth { synth in
-            var perc = synth.perc ?? SynthParams.Perc()
-            body(&perc)
-            synth.perc = perc
-        }
-    }
-
     private func setLofi(_ value: Double) {
-        editSynth { synth in
-            if value <= 0.001 {
-                synth.lofi = nil
-                return
-            }
+        var synth = preset.synth ?? SynthParams()
+        if value <= 0.001 {
+            synth.lofi = nil
+        } else {
             var lofi = synth.lofi ?? SynthParams.LoFi()
             lofi.saturation = value
             if value >= 0.66 {
@@ -302,6 +231,7 @@ struct PadADSREditorView: View {
             }
             synth.lofi = lofi
         }
+        preset.synth = synth
     }
 
     /// CUT_12: choke group picker, writes `preset.chokeGroup` through the existing binding.

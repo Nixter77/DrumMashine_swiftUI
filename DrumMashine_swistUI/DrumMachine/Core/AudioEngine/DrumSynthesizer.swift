@@ -319,6 +319,7 @@ nonisolated enum DrumSynthesizer {
         let drive = params.drive ?? 1.5
         let noiseLevel = params.noise ?? 0
         var phase: Double = 0
+        var prevRaw = 0.0
         var rng = Noise(seed: 0xA11C_E001)
         var beater = Biquad.bandpass(cutoff: 3_000, sampleRate: sampleRate, q: 1)
         var beaterRng = Noise(seed: 0xB3A7_0001)
@@ -327,16 +328,18 @@ nonisolated enum DrumSynthesizer {
             let freq = fEnd + (fStart - fEnd) * exp(-t / pitchDecay)
             phase += freq / sampleRate
             if phase > 1.0 { phase -= 1.0 }
-            var signal = sin(2.0 * .pi * phase)
+            var raw = sin(2.0 * .pi * phase)
             if t < clickWindow {
                 let clickEnv = (clickWindow - t) / clickWindow
-                signal += rng.next() * clickEnv * clickLevel
+                raw += rng.next() * clickEnv * clickLevel
             }
             if noiseLevel > 0 {
-                signal += beater.process(beaterRng.next()) * noiseLevel
+                raw += beater.process(beaterRng.next()) * noiseLevel
             }
-            signal = tanh(signal * drive)
-            buffer[i] = Float(signal * exp(-t / tau))
+            let mid = 0.5 * (prevRaw + raw)
+            let sat = 0.5 * (tanh(mid * drive) + tanh(raw * drive))
+            prevRaw = raw
+            buffer[i] = Float(sat * exp(-t / tau))
         }
         applyAttack(&buffer, sampleRate: sampleRate)
         return buffer
@@ -1022,16 +1025,18 @@ nonisolated enum DrumSynthesizer {
         guard !buffer.isEmpty, sampleRate > 0 else { return }
         let tone = Double(min(max(preset.toneFilter ?? 0, -1), 1))
         if abs(tone) > 0.01 {
-            let before = buffer.reduce(Float(0)) { max($0, abs($1)) }
+            var before: Float = 0
+            vDSP_maxmgv(buffer, 1, &before, vDSP_Length(buffer.count))
             var filter = tone < 0
                 ? Biquad.lowpass(cutoff: 18_000 * pow(0.02, -tone), sampleRate: sampleRate)
                 : Biquad.highpass(cutoff: 30 * pow(100, tone), sampleRate: sampleRate)
             for i in buffer.indices {
                 buffer[i] = Float(filter.process(Double(buffer[i])))
             }
-            let after = buffer.reduce(Float(0)) { max($0, abs($1)) }
+            var after: Float = 0
+            vDSP_maxmgv(buffer, 1, &after, vDSP_Length(buffer.count))
             if after > 0.0001, before > 0 {
-                var scale = before / after
+                var scale = min(Float(8.0), before / after)
                 vDSP_vsmul(buffer, 1, &scale, &buffer, 1, vDSP_Length(buffer.count))
             }
         }
@@ -1131,6 +1136,7 @@ nonisolated enum DrumSynthesizer {
         let decay = min(count, max(0, Int((Double(max(0, preset.decay)) * sampleRate).rounded())))
         let release = min(count - 1, max(0, Int((Double(max(0, preset.release)) * sampleRate).rounded())))
         let releaseStart = count - release
+        let curved = preset.style != .legacy
 
         func bodyGain(_ index: Int) -> Float {
             if attack > 0, index < attack {
@@ -1139,7 +1145,8 @@ nonisolated enum DrumSynthesizer {
             let intoDecay = index - attack
             if decay > 0, intoDecay < decay {
                 let progress = Float(intoDecay) / Float(decay)
-                return 1 - (1 - sustain) * progress
+                let shaped = curved ? progress * (2 - progress) : progress
+                return 1 - (1 - sustain) * shaped
             }
             return sustain
         }
@@ -1150,7 +1157,8 @@ nonisolated enum DrumSynthesizer {
             var gain = bodyGain(index)
             if release > 0, index >= releaseStart {
                 let progress = min(1, Float(index - releaseStart) / releaseSpan)
-                gain = releaseLevel * (1 - progress)
+                let shaped = curved ? progress * (2 - progress) : progress
+                gain = releaseLevel * (1 - shaped)
             }
             samples[index] *= gain
         }

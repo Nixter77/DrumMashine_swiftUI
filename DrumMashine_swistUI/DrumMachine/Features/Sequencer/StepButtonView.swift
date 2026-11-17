@@ -80,6 +80,16 @@ struct StepButtonView: View {
         }
         // Fixed frame — the single source of truth for this button's size
         .frame(height: buttonHeight)
+        .overlay(alignment: .topTrailing) {
+            if step.isActive && step.probability < 0.999 {
+                Circle()
+                    .fill(Color.white.opacity(0.92))
+                    .overlay(Circle().stroke(Color.black.opacity(0.25), lineWidth: 0.5))
+                    .frame(width: 4, height: 4)
+                    .padding(3)
+                    .allowsHitTesting(false)
+            }
+        }
         .scaleEffect(step.isActive ? 1.0 : 0.88)
         .animation(.spring(response: 0.2, dampingFraction: 0.7), value: step.isActive)
         .contentShape(Rectangle())
@@ -123,5 +133,46 @@ struct StepButtonView: View {
                     }
                 }
         )
+        .contextMenu {
+            stepContextMenu
+        }
+    }
+
+    @ViewBuilder
+    private var stepContextMenu: some View {
+        Menu("Velocity") {
+            ForEach([100, 80, 50, 25], id: \.self) { percent in
+                let value = Float(percent) / 100.0
+                Button {
+                    step.isActive = true
+                    step.velocity = value
+                } label: {
+                    if step.isActive && abs(step.velocity - value) < 0.02 {
+                        Label("\(percent)%", systemImage: "checkmark")
+                    } else {
+                        Text("\(percent)%")
+                    }
+                }
+            }
+        }
+        Menu("Probability") {
+            ForEach([100, 75, 50, 25, 10], id: \.self) { percent in
+                let value = Float(percent) / 100.0
+                Button {
+                    step.probability = value
+                } label: {
+                    if abs(step.probability - value) < 0.02 {
+                        Label("\(percent)%", systemImage: "checkmark")
+                    } else {
+                        Text("\(percent)%")
+                    }
+                }
+            }
+        }
+        Divider()
+        Button("Clear Step") {
+            step.isActive = false
+        }
+        .disabled(!step.isActive)
     }
 }

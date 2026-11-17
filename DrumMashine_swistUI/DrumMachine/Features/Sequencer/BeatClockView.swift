@@ -5,6 +5,7 @@ struct BeatClockView: View {
     var currentStep: Int
     var isPlaying: Bool
     var stepCount: StepCount
+    var onSelectStepCount: ((StepCount) -> Void)? = nil
     
     // 4 beats, each beat = 4 steps
     private var currentBeat: Int { currentStep / 4 }
@@ -33,21 +34,25 @@ struct BeatClockView: View {
                     .foregroundColor(AppTheme.textTertiary)
                 
                 ForEach(StepCount.allCases, id: \.self) { sc in
-                    Text(sc.label)
-                        .font(.system(.caption2, design: .monospaced).weight(.bold))
-                        .foregroundColor(stepCount == sc ? AppTheme.accent : AppTheme.textTertiary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(stepCount == sc ? AppTheme.accent.opacity(0.15) : Color.clear)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(stepCount == sc ? AppTheme.accent.opacity(0.4) : Color.gray.opacity(0.2), lineWidth: 1)
-                                )
-                        )
-                        // NOTE: stepCount is passed in as read-only for display;
-                        // actual changes are driven by the parent via onStepCountChange
+                    Button {
+                        onSelectStepCount?(sc)
+                    } label: {
+                        Text(sc.label)
+                            .font(.system(.caption2, design: .monospaced).weight(.bold))
+                            .foregroundColor(stepCount == sc ? AppTheme.accent : AppTheme.textTertiary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(stepCount == sc ? AppTheme.accent.opacity(0.15) : Color.clear)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(stepCount == sc ? AppTheme.accent.opacity(0.4) : Color.gray.opacity(0.2), lineWidth: 1)
+                                    )
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

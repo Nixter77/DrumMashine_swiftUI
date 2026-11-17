@@ -118,6 +118,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
     private let gainAlpha: Float
 
     private let voices: UnsafeMutablePointer<Voice>
+    private let activeSlots: UnsafeMutablePointer<Int>
     /// One SPSC ring per producer thread; the render thread drains both.
     let controlRing = CommandRing(capacity: ringCapacity)
     let sequencerRing = CommandRing(capacity: ringCapacity)
@@ -178,6 +179,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
 
         voices = .allocate(capacity: Self.voiceCount)
         voices.initialize(repeating: Voice(), count: Self.voiceCount)
+        activeSlots = .allocate(capacity: Self.voiceCount)
+        activeSlots.initialize(repeating: 0, count: Self.voiceCount)
         retired = .allocate(capacity: retireCapacity)
         retired.initialize(repeating: Retired(), count: retireCapacity)
         slotPtr = .allocate(capacity: Self.slotCount)
@@ -222,6 +225,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
         }
         voices.deinitialize(count: Self.voiceCount)
         voices.deallocate()
+        activeSlots.deinitialize(count: Self.voiceCount)
+        activeSlots.deallocate()
         retired.deinitialize(count: retireCapacity)
         retired.deallocate()
         slotPtr.deinitialize(count: Self.slotCount)
@@ -352,10 +357,17 @@ nonisolated private final class Mixer: @unchecked Sendable {
                 nextDueFrame(controlRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount),
                 nextDueFrame(sequencerRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount)
             )
+            let activeCount = buildActiveSlots()
+            if activeCount == 0 && sidechainEnvelope.isIdle && gainSettled {
+                segmentStart = segmentEnd
+                continue
+            }
             for frame in segmentStart..<segmentEnd {
                 duckGain = sidechainEnvelope.isIdle ? 1 : sidechainEnvelope.next()
-                mix(frame: frame, left: left, right: right)
-                blockPeak = max(blockPeak, abs(left[frame]), abs(right[frame]))
+                if activeCount > 0 {
+                    mix(frame: frame, left: left, right: right, activeCount: activeCount)
+                    blockPeak = max(blockPeak, abs(left[frame]), abs(right[frame]))
+                }
                 if !gainSettled { smooth() }
             }
             segmentStart = segmentEnd
@@ -497,8 +509,25 @@ nonisolated private final class Mixer: @unchecked Sendable {
         return oldest
     }
 
-    private func mix(frame: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>) {
+    private func buildActiveSlots() -> Int {
+        var count = 0
         for index in 0..<Self.voiceCount {
+            if voices[index].active || voices[index].tailRemaining > 0 {
+                activeSlots[count] = index
+                count += 1
+            }
+        }
+        return count
+    }
+
+    private func mix(
+        frame: Int,
+        left: UnsafeMutablePointer<Float>,
+        right: UnsafeMutablePointer<Float>,
+        activeCount: Int
+    ) {
+        for slotIdx in 0..<activeCount {
+            let index = activeSlots[slotIdx]
             if voices[index].tailRemaining > 0,
                let ptr = voices[index].tailPtr,
                voices[index].tailIndex < voices[index].tailCount {

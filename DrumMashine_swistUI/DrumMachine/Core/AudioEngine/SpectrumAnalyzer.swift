@@ -32,6 +32,7 @@ nonisolated final class SpectrumAnalyzer: @unchecked Sendable {
     static let fftSize = 1024
     static let bandCount = 32
     static let waveformPoints = 60
+    static let bandFloor: Float = 1e-4
 
     private let snapshot = Mutex(MeterFrame.silent)
     private let fftSetup: FFTSetup?
@@ -125,16 +126,25 @@ nonisolated final class SpectrumAnalyzer: @unchecked Sendable {
 
         smoothL = smoothL * 0.7 + rmsL * 0.3
         smoothR = smoothR * 0.7 + rmsR * 0.3
+        if smoothL < Self.bandFloor { smoothL = 0 }
+        if smoothR < Self.bandFloor { smoothR = 0 }
 
-        if frameLength >= Self.fftSize {
+        if peakL < 1e-5 && peakR < 1e-5 {
+            decayBands()
+        } else if frameLength >= Self.fftSize {
             analyzeSpectrum(left)
         } else {
-            for index in smoothedBands.indices {
-                smoothedBands[index] *= 0.82
-            }
+            decayBands()
         }
-        pushEnvelope(louderChannel(left, right, count: frameLength), count: frameLength)
+        pushEnvelope(louderChannel(left, right, peakL: peakL, peakR: peakR), count: frameLength)
         publish(peakL: peakL, peakR: peakR)
+    }
+
+    private func decayBands() {
+        for index in smoothedBands.indices {
+            let decayed = smoothedBands[index] * 0.82
+            smoothedBands[index] = decayed < Self.bandFloor ? 0 : decayed
+        }
     }
 
     private func rms(_ samples: UnsafePointer<Float>, count: Int) -> Float {
@@ -153,9 +163,10 @@ nonisolated final class SpectrumAnalyzer: @unchecked Sendable {
     private func louderChannel(
         _ left: UnsafePointer<Float>,
         _ right: UnsafePointer<Float>,
-        count: Int
+        peakL: Float,
+        peakR: Float
     ) -> UnsafePointer<Float> {
-        abs(peak(left, count: count)) >= abs(peak(right, count: count)) ? left : right
+        abs(peakL) >= abs(peakR) ? left : right
     }
 
     private func analyzeSpectrum(_ samples: UnsafePointer<Float>) {
@@ -204,7 +215,8 @@ nonisolated final class SpectrumAnalyzer: @unchecked Sendable {
             }
             let decibels = 10 * log10(maxMagnitude + 1e-10)
             let target = max(0, min(1, (decibels + 80) / 80))
-            smoothedBands[band] = max(target, smoothedBands[band] * 0.82)
+            let smoothed = max(target, smoothedBands[band] * 0.82)
+            smoothedBands[band] = smoothed < Self.bandFloor ? 0 : smoothed
         }
     }
 
@@ -215,6 +227,9 @@ nonisolated final class SpectrumAnalyzer: @unchecked Sendable {
             if abs(sample) > abs(extreme) {
                 extreme = sample
             }
+        }
+        if abs(extreme) < 1e-5 {
+            extreme = 0
         }
         if waveform.count > 1 {
             for index in 1..<waveform.count {

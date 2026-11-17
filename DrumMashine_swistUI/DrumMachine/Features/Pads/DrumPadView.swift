@@ -9,6 +9,8 @@ struct DrumPadView: View {
     var soundMenu: (() -> AnyView)? = nil
     /// CUT_12: "C1"…"C4" from the track preset's choke group; nil hides the badge.
     var chokeBadge: String? = nil
+    /// Live track preset name shown below the pad label.
+    var presetName: String? = nil
     
     @State private var isPressed: Bool = false
     @State private var rippleScale: CGFloat = 0
@@ -76,11 +78,11 @@ struct DrumPadView: View {
                 .opacity(rippleOpacity)
             
             // Content
-            VStack(spacing: 6) {
+            VStack(spacing: 2) {
                 Image(systemName: pad.iconName)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 22, height: 22)
                     .foregroundStyle(
                         LinearGradient(
                             colors: ThemeStore.isLight
@@ -93,6 +95,16 @@ struct DrumPadView: View {
                 Text(pad.name)
                     .font(.system(.callout, design: .rounded).weight(.bold))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                if let presetName, !presetName.isEmpty {
+                    Text(presetName)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(ThemeStore.isLight ? Color.white.opacity(0.9) : AppTheme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 4)
+                }
                 
                 // ADSR indicator (small dot if customized)
                 if let soundMenu {
@@ -102,7 +114,8 @@ struct DrumPadView: View {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 9))
                             .foregroundColor(ThemeStore.isLight ? Color.white.opacity(0.85) : padColor.opacity(0.75))
-                            .padding(3)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
                             .contentShape(Rectangle())
                     }
                     .menuStyle(.borderlessButton)
@@ -196,6 +209,13 @@ extension DrumPadView {
     func withChokeBadge(_ badge: String?) -> DrumPadView {
         var copy = self
         copy.chokeBadge = badge
+        return copy
+    }
+
+    /// Sets `presetName` after the trailing-closure init.
+    func withPresetName(_ name: String?) -> DrumPadView {
+        var copy = self
+        copy.presetName = name
         return copy
     }
 }

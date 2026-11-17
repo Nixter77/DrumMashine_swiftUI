@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 // MARK: - Premium Knob View (with value tooltip, color, double-tap reset)
 struct KnobView: View {
     @Binding var value: Double
@@ -7,6 +10,7 @@ struct KnobView: View {
     var color: Color = AppTheme.accent
     var size: CGFloat = 48
     var valueFormatter: ((Double) -> String)? = nil
+    var defaultValue: Double? = nil
     
     @State private var lastValue: Double = 0
     @State private var isDragging: Bool = false
@@ -139,7 +143,12 @@ struct KnobView: View {
                                     isDragging = true
                                     lastValue = value
                                 }
-                                let sensitivity = 0.004
+                                #if os(macOS)
+                                let fine = NSEvent.modifierFlags.contains(.shift)
+                                #else
+                                let fine = false
+                                #endif
+                                let sensitivity = fine ? 0.001 : 0.004
                                 let delta = -Double(gesture.translation.height) * sensitivity
                                 value = min(
                                     max(lastValue + delta * (range.upperBound - range.lowerBound),
@@ -153,9 +162,11 @@ struct KnobView: View {
                             }
                     )
                     .onTapGesture(count: 2) {
-                        // Double-tap resets to midpoint
+                        // Double-tap resets to defaultValue (clamped to range) or midpoint
+                        let target = defaultValue.map { min(max($0, range.lowerBound), range.upperBound) }
+                            ?? (range.lowerBound + (range.upperBound - range.lowerBound) / 2.0)
                         withAnimation(.spring(response: 0.3)) {
-                            value = range.lowerBound + (range.upperBound - range.lowerBound) / 2.0
+                            value = target
                             lastValue = value
                         }
                     }

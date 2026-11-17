@@ -137,6 +137,9 @@ class SoundLibraryManager {
         p.release = release
         p.pitch = pitch
         p.voice = SoundPreset.inferredVoice(category: category, filename: filename, decay: decay)
+        if category == .hihat {
+            p.chokeGroup = 1
+        }
         p.style = .legacy
         return p
     }

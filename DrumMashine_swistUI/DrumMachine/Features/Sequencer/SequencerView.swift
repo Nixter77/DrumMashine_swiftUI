@@ -70,36 +70,11 @@ struct SequencerTopBar: View {
         BeatClockView(
             currentStep: sequencer.currentStep,
             isPlaying: sequencer.isPlaying,
-            stepCount: sequencer.stepCount
-        )
-        .overlay(
-            HStack {
-                Spacer()
-                HStack(spacing: 4) {
-                    ForEach(StepCount.allCases, id: \.self) { sc in
-                        Button(action: {
-                            withAnimation(.spring(response: 0.2)) {
-                                sequencer.stepCount = sc
-                            }
-                        }) {
-                            Text(sc.label)
-                                .font(.system(.caption2, design: .monospaced).weight(.bold))
-                                .foregroundColor(sequencer.stepCount == sc ? AppTheme.accent : AppTheme.textTertiary)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(sequencer.stepCount == sc ? AppTheme.accent.opacity(0.15) : Color.clear)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .stroke(sequencer.stepCount == sc ? AppTheme.accent.opacity(0.4) : Color.gray.opacity(0.2), lineWidth: 1)
-                                        )
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
+            stepCount: sequencer.stepCount,
+            onSelectStepCount: { sc in
+                withAnimation(.spring(response: 0.2)) {
+                    sequencer.stepCount = sc
                 }
-                .padding(.trailing, 12)
             }
         )
     }

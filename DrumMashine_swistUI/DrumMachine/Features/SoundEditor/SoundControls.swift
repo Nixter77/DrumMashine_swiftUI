@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 
 /// One knob in the sound editor. Every track, synth or sample, gets a list of these.
 nonisolated struct SoundControl: Identifiable, Sendable {
@@ -167,7 +167,8 @@ nonisolated enum SoundControls {
 
 /// Which track's sound editor is open. Pads (long press) and sequencer rows (name button) both set it.
 @MainActor
-final class SoundEditorRouter: ObservableObject {
+@Observable
+final class SoundEditorRouter {
     static let shared = SoundEditorRouter()
-    @Published var trackIndex: Int?
+    var trackIndex: Int?
 }

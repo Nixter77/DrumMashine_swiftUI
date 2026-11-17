@@ -85,6 +85,17 @@ struct MainLayoutView: View {
             minHeight: AppLayout.minWindow.height,
             alignment: .top
         )
+        .background {
+            if !showsLayoutForSnapshot {
+                KeyShortcutMonitor(
+                    sequencer: sequencerEngine,
+                    isAudioReady: { audioManager.isReady }
+                )
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
         .onChange(of: libraryOpen) { _, open in
             if SessionStore.libraryInspectorOpen != open {
                 SessionStore.libraryInspectorOpen = open
@@ -363,6 +374,92 @@ private struct LibraryInspectorModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// Installs a window-scoped key monitor so Space (Play/Stop) and F (Fill) work regardless of
+/// which non-text control is focused, while leaving TextFields and modal sheets/panels untouched.
+private struct KeyShortcutMonitor: NSViewRepresentable {
+    let sequencer: SequencerEngine
+    let isAudioReady: () -> Bool
+
+    func makeNSView(context: Context) -> KeyMonitorView {
+        let view = KeyMonitorView()
+        view.sequencer = sequencer
+        view.isAudioReady = isAudioReady
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyMonitorView, context: Context) {
+        nsView.sequencer = sequencer
+        nsView.isAudioReady = isAudioReady
+    }
+
+    static func dismantleNSView(_ nsView: KeyMonitorView, coordinator: ()) {
+        nsView.removeMonitor()
+    }
+}
+
+private final class KeyMonitorView: NSView {
+    var sequencer: SequencerEngine?
+    var isAudioReady: (() -> Bool)?
+    private var monitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            installMonitorIfNeeded()
+        } else {
+            removeMonitor()
+        }
+    }
+
+    private func installMonitorIfNeeded() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                self?.handleKeyDown(event) ?? false
+            }
+            return handled ? nil : event
+        }
+    }
+
+    func removeMonitor() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard let sequencer, isAudioReady?() == true else { return false }
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+            return false
+        }
+        guard let hostWindow = window,
+              hostWindow.isKeyWindow,
+              event.window === hostWindow,
+              !(hostWindow is NSPanel),
+              hostWindow.attachedSheet == nil,
+              !(hostWindow.firstResponder is NSText) else {
+            return false
+        }
+        let chars = event.charactersIgnoringModifiers ?? ""
+        if event.keyCode == 49 || chars == " " {
+            if !event.isARepeat {
+                withAnimation(.spring(response: 0.2)) {
+                    sequencer.togglePlayPause()
+                }
+            }
+            return true
+        }
+        if chars == "f" || chars == "F" {
+            if !event.isARepeat {
+                sequencer.fillOnce.toggle()
+            }
+            return true
+        }
+        return false
     }
 }
 

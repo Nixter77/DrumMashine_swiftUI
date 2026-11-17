@@ -726,7 +726,7 @@ struct SoundPresetCell: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(preset.name)
                         .font(.system(.caption, design: .monospaced).weight(.semibold))
-                        .foregroundColor(isSelected ? .white : AppTheme.textSecondary)
+                        .foregroundColor(isSelected ? (ThemeStore.isLight ? AppTheme.textPrimary : .white) : AppTheme.textSecondary)
                         .lineLimit(1)
                     if SampleImporter.isMissing(preset) {
                         Text("файл не найден")

@@ -266,3 +266,25 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
 - LivePadChokeTests (4): group 1/nil/4 mapping + parity with SequencerEngine snapshot for nil/1/3. Tests 235/0 (`~/.drum_dd`), log `qa/cut14/`.
 - AC-5 listen: DEFER (no Mac GUI session for Eng).
 - KEEP ME IN: library hats without a group and old projects with nil on hats do not choke on tap either (same as sequencer). CUT_15 candidates. MIDI/keyboard/preview triggers unchanged (no choke).
+
+## Performance, DSP, Cleanup & Sequencer/Pad UX Improvements (Nov 17, 2026)
+- **Performance/CPU**:
+  - `SpectrumAnalyzer.swift`: added `bandFloor = 1e-4` zero-snapping (`smoothL`/`smoothR`, `smoothedBands`, `pushEnvelope` `< 1e-5` → 0), idle FFT bypass when `peakL < 1e-5 && peakR < 1e-5` (decaying bands via `decayBands()`), and reused `peakL`/`peakR` in `louderChannel`.
+  - `VoiceEngine.swift`: added preallocated `activeSlots` / `buildActiveSlots()` and silent/idle/settled fast-path in `Mixer.render` + active-slot iteration in `mix`, preserving bit-identical output (`VoiceEngineSegmentRenderTests`).
+  - `AudioEngineManager.swift`: parallelized startup preset synthesis in `startBackgroundSynthesis()` using `withTaskGroup` while keeping epoch/sample-rate/presetID install guards.
+- **DSP/Sound**:
+  - `DrumSynthesizer.swift`: SIMD `vDSP_maxmgv` peak scans and `min(8.0, before / after)` makeup cap in `applyToneAndLevel`; 2x linear oversampling around `tanh` in `tunedKick`; smooth `progress * (2 - progress)` decay/release shaping in `applyADSR` for non-`.legacy` presets (60 `.legacy` D-0 SHA-256 hashes unchanged).
+  - `SampleImporter.swift`: enabled `AVAudioQuality.max.rawValue` on `AVAudioConverter.sampleRateConverterQuality` in `renderFile`.
+  - `SoundLibraryManager.swift`: assigned `chokeGroup = 1` to all `.hihat` presets in `make(...)`.
+- **Code cleanup**:
+  - `SoundControls.swift` & `PadsGridView.swift`: migrated `SoundEditorRouter` from `ObservableObject`/`@Published` to `@Observable`.
+  - `PadADSREditorView.swift`: removed unused `editSynth`/`editKick`/…/`editPerc` helpers (`setLofi` mutates `preset.synth` directly).
+  - `MasterControlView.swift`: removed unused `OutputMeterBar`.
+- **Sequencer/Pad UX**:
+  - `BeatClockView.swift` & `SequencerView.swift`: wired `onSelectStepCount` into `BeatClockView` buttons and removed the duplicate `StepCount` overlay in `SequencerTopBar`.
+  - `StepButtonView.swift`: added top-trailing probability dot (`step.isActive && step.probability < 0.999`) and `.contextMenu` with Velocity, Probability, and Clear Step.
+  - `DrumPadView.swift` & `PadsGridView.swift`: added compact live `presetName` readout on pads via `.withPresetName(...)`.
+  - `SoundLibraryView.swift`: updated `SoundPresetCell` selected name color for Studio Light contrast (`ThemeStore.isLight ? AppTheme.textPrimary : .white`).
+  - `KnobView.swift`: added `defaultValue` double-tap reset and Shift fine-drag (`0.001` vs `0.004`).
+  - `MainLayoutView.swift`: added window-scoped `KeyShortcutMonitor` (`Space` play/stop, `F` fill-once, ignoring text fields, modifiers, repeats, and modal sheets/panels).
+- **Tests**: `DrumMashine_swistUITests` — 239 passed, 0 failed (`~/.drum_dd`), including `PerformanceAndUXImprovementTests` (4) and all guards (`FactoryBufferTests`, `VoiceEngineSegmentRenderTests`, `StepFlashSourceGuardTests`, `ThemeToastSourceGuardTests`, `SoundControlsTests`, `LayoutSnapshotTests`, `ChokeOffTests`).

@@ -203,6 +203,7 @@ nonisolated enum SampleImporter {
         ), let converter = AVAudioConverter(from: source, to: destination) else {
             return [0]
         }
+        converter.sampleRateConverterQuality = AVAudioQuality.max.rawValue
         let capacity = AVAudioFrameCount(file.length)
         guard let input = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: capacity) else { return [0] }
         try file.read(into: input)

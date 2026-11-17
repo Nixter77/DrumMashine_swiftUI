@@ -679,22 +679,31 @@ class AudioEngineManager {
         let presets = trackPresets
         let sampleRoot = self.sampleRoot
         Task.detached(priority: .userInitiated) {
-            for index in presets.indices {
-                guard let preset = presets[index] else { continue }
-                let samples = DrumSynthesizer.samples(for: preset, sampleRate: sampleRate, sampleRoot: sampleRoot)
-                let presetID = preset.id
-                let name = preset.name
-                await MainActor.run {
-                    let manager = AudioEngineManager.shared
-                    guard epoch == manager.sampleInstallEpoch else { return }
-                    guard abs(manager.outputSampleRate - sampleRate) < 0.5 else { return }
-                    guard manager.trackPresets[index]?.id == presetID else { return }
-                    manager.installGeneratedBuffer(
-                        samples,
-                        index: index,
-                        name: name,
-                        sampleRate: sampleRate
-                    )
+            await withTaskGroup(of: (Int, UUID, String, [Float]).self) { group in
+                for index in presets.indices {
+                    guard let preset = presets[index] else { continue }
+                    group.addTask {
+                        let samples = DrumSynthesizer.samples(
+                            for: preset,
+                            sampleRate: sampleRate,
+                            sampleRoot: sampleRoot
+                        )
+                        return (index, preset.id, preset.name, samples)
+                    }
+                }
+                for await (index, presetID, name, samples) in group {
+                    await MainActor.run {
+                        let manager = AudioEngineManager.shared
+                        guard epoch == manager.sampleInstallEpoch else { return }
+                        guard abs(manager.outputSampleRate - sampleRate) < 0.5 else { return }
+                        guard manager.trackPresets[index]?.id == presetID else { return }
+                        manager.installGeneratedBuffer(
+                            samples,
+                            index: index,
+                            name: name,
+                            sampleRate: sampleRate
+                        )
+                    }
                 }
             }
         }

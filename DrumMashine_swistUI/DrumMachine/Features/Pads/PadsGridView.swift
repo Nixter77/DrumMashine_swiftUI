@@ -20,7 +20,7 @@ struct PadsGridView: View {
         DrumPad(id: UUID(), name: "PERC",  iconName: "diamond.fill",           colorHex: "FF375F", soundPresetId: UUID())
     ]
     
-    @ObservedObject private var router = SoundEditorRouter.shared
+    private var router: SoundEditorRouter { SoundEditorRouter.shared }
     /// Pads (long press) and sequencer track names (click) open the same editor.
     private var editingPadIndex: Int? {
         get { router.trackIndex }
@@ -47,6 +47,7 @@ struct PadsGridView: View {
                         AnyView(soundMenu(track: index))
                     }
                     .withChokeBadge(chokeBadge(track: index))
+                    .withPresetName(presetName(track: index))
                     .dropDestination(for: URL.self) { urls, _ in
                         guard let url = urls.first, let sequencer else { return false }
                         let track = index
@@ -176,6 +177,11 @@ struct PadsGridView: View {
     private func chokeBadge(track index: Int) -> String? {
         guard let sequencer, sequencer.tracks.indices.contains(index) else { return nil }
         return ChokeGroupOption(preset: sequencer.tracks[index].soundPreset.chokeGroup).badge
+    }
+
+    private func presetName(track index: Int) -> String? {
+        guard let sequencer, sequencer.tracks.indices.contains(index) else { return nil }
+        return sequencer.tracks[index].soundPreset.name
     }
 
     /// CUT_14: live tap chokes like the sequencer (nil = Off).
