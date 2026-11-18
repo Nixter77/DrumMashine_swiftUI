@@ -384,3 +384,37 @@ Golden: legacy 60 — без изменений; d2 — без изменени�
 Бюджеты: T-PERF-1…3 не измерялись. Новых буферов и wav нет.
 Что слушать: 9 accent в паттерне ярче, не только громче; 26 нарисовать crescendo на хэтах — рост громкости и яркости, undo одним шагом; 4 ghost 0.35 тише акцента. Окно приложения в этом прогоне не открывалось, пункт 27 (обе темы глазами) не проверялся.
 Риски/долги: UI-тест рисования лейна не запускался — цель закрыта юнитом на модель правки. Жест протяжки и двойной клик не гоняются тестом. Real Rusty Multi не проверялся. Уровни, бюджеты, listening WAV и чек-лист §11 — AD-6. Хост x86_64, не Apple Silicon.
+
+## AD-6 — levels, budgets, listening render  (ветка feat/acoustic-dynamics @ a5e3ac0408e31f537065865bc4940442347eb7e0)
+Статус: DONE
+Тесты: 286 passed, 1 skipped, 0 failed. Два полных прогона `DrumMashine_swistUITests`, в каждом 287 уникальных кейсов. Пропущен только `ListeningRenderTests/writesGrooveRampAndRoundRobinForEachKit()` (`DRUM_RENDER` не задан). Лог qa/ad6/test-2026-11-18-ad6.log — второй прогон, `** TEST SUCCEEDED **`, EXIT:0, xcresult Test-DrumMashine_swistUI-2026.11.18_09-25-35-+0200. Первый прогон тот же счёт, EXIT:0, xcresult Test-DrumMashine_swistUI-2026.11.18_09-23-11-+0200. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`.
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `levelTrim` по имени файла и `grooveGain` по киту двигают `acousticHit` в полосу TQ-1 и общий референс-грув в TQ-3. У dynamics `volume` может быть больше 1. Legacy по-прежнему клампится к 1. Банк после этого peak-normalize на артикуляцию, поэтому живой микс не хранит сырую иерархию `acousticHit`. `dynamicsBufferPeak = 0.95 / (8 × cos(π/4))`.
+- Закрытый хэт Hip-Hop Breaks: decay 0.05, trim 4.977. Крэш Cajon Unplugged — короткий splash (decay 0.16, pitch +6, scale 1.7, trim 0.661). Слой малого Rock Big Room: bed gain 1.55, остальные малые 1. Проволока 3–8 кГц на v=1 не меньше 3× энергии на v=0.2. Центроид первых 30 мс на v=1 не меньше 1.4× центроида на v=0.25 у kick, snare, hat, ride, crash.
+- Бюджеты на хосте Mac mini, macOS 15.7.4, x86_64, Debug приложения с `-O` (не Apple Silicon и не Release). Блок 512 сэмплов, 32 кроссфейда: 0.289 мс и 0.315 мс при лимите 2.667 мс. Пики восьми треков по центру ≤ 0.6706 (лимит 0.95). Память кита 19.13–37.06 МБ (лимит 48). Самый долгий банк на зелёном дереве: Rock Big Room 6.690 с в одном раннере; в последней паре 1.354–4.608 с. Порог 2.5 с в тесте только для arm64, иначе 180 с. Эти секунды — Debug `-O` на x86_64.
+- Karoryfer Big Rusty Drums, LICENSE на 2026-11-18: CC0 1.0. SHA файла лицензии не записывался. Новые wav не импортировались, Real Rusty Multi остаётся синтезом. Новых файлов под `Resources/` нет.
+- Listening pack: 12×3 = 36 wav, пик каждого 16383 (шкала 0.5). Тест с `DRUM_RENDER=1` прошёл за 40.444 с. Песочница не пустила запись на рабочий стол; тест записал `~/Library/Containers/Home.DrumMashine-swistUI/Data/tmp/DrumMashine_listening/` (путь в `ad6-listening-path.txt`). Копия для прослушки: `~/Desktop/DrumMashine_listening/`. В git этих wav нет. Грув — 8 тактов демо. Рампа — 16 ударов v 0.1→1.0 с шагом 0.22 с. RR — 8 ударов v=0.8 с шагом 0.25 с.
+Метрики (последний раннер полного прогона; второй раннер той же пары дал те же dB, МБ и пики):
+
+| Кит | Δ к медиане, dB | abs pLUFS | Банк, с | МБ | Пик суммы |
+| --- | --- | --- | --- | --- | --- |
+| Studio Dry | +0.88 | −12.23 | 4.053 | 28.83 | 0.4616 |
+| Jazz Club 60s | −0.40 | −13.51 | 4.199 | 32.91 | 0.4237 |
+| Brushes Ballad | −3.05 | −16.16 | 4.085 | 32.93 | 0.4409 |
+| Funk Tight 70s | −0.54 | −13.64 | 2.894 | 26.96 | 0.5586 |
+| Rock Big Room | +0.24 | −12.87 | 4.307 | 37.06 | 0.3924 |
+| Vintage 60s Soul | −1.32 | −14.43 | 4.019 | 33.86 | 0.4468 |
+| Vintage 70s Dead | +0.23 | −12.87 | 2.490 | 25.43 | 0.4685 |
+| Fusion Bright | −0.01 | −13.12 | 2.719 | 26.74 | 0.5200 |
+| Hip-Hop Breaks | −0.27 | −13.38 | 3.400 | 33.55 | 0.5514 |
+| Latin Percussion | +0.01 | −13.10 | 2.445 | 32.46 | 0.6706 |
+| Cajon Unplugged | +0.72 | −12.39 | 1.354 | 19.13 | 0.4233 |
+| Orchestral | −5.17 | −18.28 | 4.071 | 33.69 | 0.5691 |
+
+Бюджеты: кит ≤ 48 МБ — да. Восемь треков + превью ≤ 64 МБ не выделялись отдельным счётчиком; сумма пиков восьми треков ≤ 0.95. Блок ≤ 25 % реального времени — да (0.289–0.315 мс против 2.667 мс). Смена кита на лету отдельным замером в этом прогоне не гонялась.
+Имена (filename → «кит + слот»): суффиксы `kick snare hat clap tom ride crash perc`. Особые слоты: Brushes — Brushes, Brush Snap, Mallet Toms, Brush Ride, Splash, Shaker Egg. Jazz — Finger Snap, Shaker. Funk — Acoustic Clap, Cowbell. Rock — Group Clap, Tambourine Hit. Soul — Group Clap, Tambourine Shake. Dead — Dead Snap, Dry Shaker. Fusion — Acoustic Clap, Splash, Agogo. Hip-Hop — Group Clap, China, Break Tambourine. Latin — Cajon Bass, Timbale, Shaker, Group Clap, Congas, Cowbell, Crash, Bongo. Cajon — Cajon Bass, Cajon Slap, Shaker Egg, Finger Snap, Djembe, Tambourine Shake, Splash, Claves. Orchestral — Bass Drum, Concert Snare, Hat, Finger Snap, Timpani, Suspended, Crash, Triangle. Studio Dry — Kick, Snare, Hat, Group Clap, Toms, Ride, Crash, Tambourine. Остальные кики/малые/хэты/райды без пометки носят слот Kick, Snare, Hat, Toms, Ride, Crash.
+P2, не сделано: tabla-like, Afro/World, «Сделать живым», MIDI Learn. Real Rusty Multi не импортирован.
+Чек-лист §11 не отмечался. Прослушка человеком не проводилась.
+Что слушать: 6 — `kit_*_velocity_ramp.wav`, 16 ударов 0.1→1.0, шаг 0.22 с, границы слоёв не роняют RMS; 7 — `kit_*_rr.wav`, 8 ударов v=0.8, шаг 0.25 с, корреляция первых 50 мс внутри (0.6, 0.995), RMS в пределах 0.7 дБ; 10 — кик Rock Big Room в большой комнате, Funk Tight сухой, Jazz Club f0 70; 11 — center / rim / cross-stick и ghost 0.35, проволока на акценте ≥ 3× ghost; 19 — таблица выше, Brushes −3.05 дБ и Orchestral −5.17 дБ, остальные в ±1.5 дБ; 20 — TQ-1 на v=0.8 прошёл, хэт и тарелки тише малого. Пункты 3 и 27 глазами и Force Touch не проверялись.
+Риски/долги: живой банк после peak-normalize не держит сырые дельты TQ-1. Жёсткая панорама восьми полных ударов может выйти за 0.95; замер — центр. Порог 2.5 с относится к Apple Silicon / Release, этот хост его не мерил. UI-тест лейна по-прежнему не запускался. Мерж в main не делался.
