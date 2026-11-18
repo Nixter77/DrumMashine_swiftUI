@@ -303,3 +303,19 @@ Golden: legacy 60 — без изменений; d2 — снят один раз
 Бюджеты: не измерялись (слоёв ещё нет)
 Что слушать: нечего — AD-0 не меняет звук
 Риски/долги: AD-1…AD-6 ещё не начаты. Хост x86_64, порог 2.5 с в Debug для Apple Silicon придётся замерить отдельно. Real Rusty Multi не проверялся.
+
+## AD-1 — velocity model, accent, pad, keyboard, MIDI  (ветка feat/acoustic-dynamics @ c87ef3ee2cd74308112b42f86cf5d6e710e54578)
+Статус: DONE
+Тесты: 252/0, лог qa/ad1/test-2026-11-18-ad1.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `Dynamics.swift`: кривая (linear / dB range 30 shape 1 / table), `VelocityMath.resolve` (акцент, затем грув, затем humanize), `PadVelocity`, `KeyboardRouter`, `MIDIPacketParser`, GM-карта и CC4, `SeededRNG`. Пустой объект кривой декодируется как dB 30/1. При velocity 0.25 кривая даёт около −22.5 dB.
+- `SequencerScheduler.fire`: при выключенном акценте и нулевом humanize остаётся прежнее выражение `step.velocity * velMul`. Иначе вызывается `VelocityMath.resolve`. Humanize берёт `nextUnitSigned` только когда spread > 0.
+- Сессия, кит, шаг и пресет получили опциональные поля (`accent`, `articulation`, `dynamics`, `mic`, `padVelocityMode`, `humanizeVelocity`, `midiMap`, `accentAmount`). Старые фикстуры декодируются с nil. `FactoryStyle.percussion` — единственный новый case. `synthesisHash` не включает кривую.
+- Пэд: fixed по умолчанию, position, pressure (пик за первые 12 мс), ⌥ ghost 0.35, ⇧ акцент, full-level. Клавиши 1–8 играют пэды; Space и F остаются play и fill. Повтор клавиши не стреляет.
+- MIDI: отдельная дорожка `.midi` в `VoiceEngine`. Колбэк не пишет в control ring и игнорирует generation. `MIDIHub` стартует из `MainLayoutView`, не из теста и не из снимка раскладки. Randomize паттерна сидирован.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_04-59-43-+0200: 252 уникальных имени, 260 прогонов на устройстве, 0 failed. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`.
+Метрики: новых звуков нет. dB-кривая range 30 при velocity 0.25 = −22.5 dB (±0.5 в тесте). Легаси-громкость линейная.
+Бюджеты: не измерялись (слоёв ещё нет). Пустое MIDI-кольцо не меняет офлайн-микс.
+Что слушать: тембра ещё нет, пресетов dynamics нет. По громкости уже можно: 4 — ⌥ пишет 0.35, ⇧ пишет акцент и velocity 1; 8 — humanize 0 не двигает velocity, 100 % даёт ±0.15 и повторяется с тем же сидом. Пункты 1–3, 5–7, 9–15 ждут слои (AD-2…AD-4).
+Риски/долги: T-VEL-1 и T-VEL-7 появятся вместе с акустическими пресетами. Real Rusty Multi не проверялся. Хост x86_64. Слои по умолчанию 4, round-robin 2 (ротация) — записано в design note, код слоёв ещё впереди.
