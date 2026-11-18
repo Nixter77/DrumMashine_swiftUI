@@ -28,6 +28,12 @@ enum FactoryKits {
         ]
     }
 
+    /// The original five kits, then the acoustic kits. `all()` stays the original five.
+    @MainActor
+    static func listed() -> [DrumKit] {
+        all() + AcousticKits.kits()
+    }
+
     @MainActor
     private static func kit(_ name: String, _ idName: String, _ filenames: [String]) -> DrumKit {
         let library = SoundLibraryManager.shared.availableSounds

@@ -104,6 +104,7 @@ class SoundLibraryManager {
         ]
         all += FactoryPresets.additional()
         all += AcousticKit.presets()
+        all += AcousticKits.presets()
         
         availableSounds = all
         

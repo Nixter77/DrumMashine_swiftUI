@@ -1,9 +1,15 @@
+import AppKit
 import SwiftUI
 // MARK: - Premium Drum Pad with Ripple Animation + Long Press for ADSR
 struct DrumPadView: View {
     var pad: DrumPad
     var padIndex: Int
-    var onTap: (Float) -> Void
+    var onTap: (PadHit) -> Void
+    /// Position, pressure, option, and shift. The default is fixed velocity 1.
+    var resolveHit: (Double, Double, Double?, Bool, Bool) -> PadHit = { _, _, _, _, _ in
+        PadHit(velocity: 1, accent: false)
+    }
+    var pressureEnabled: Bool = false
     var onLongPress: (() -> Void)? = nil
     /// Sound menu shown from the ≡ icon and the right-click menu.
     var soundMenu: (() -> AnyView)? = nil
@@ -18,6 +24,8 @@ struct DrumPadView: View {
     @State private var glowOpacity: Double = 0
     @State private var isLongPressing: Bool = false
     @State private var longPressProgress: Double = 0
+    @State private var velocityRing: Double = 0
+    @State private var padHeight: CGFloat = 1
     
     private var padColor: Color {
         guard padIndex < AppTheme.padColors.count else { return pad.color }
@@ -152,12 +160,32 @@ struct DrumPadView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke((ThemeStore.isLight ? Color.white : padColor).opacity(isPressed ? 0.9 : 0), lineWidth: 2)
         )
+        .overlay {
+            Circle()
+                .stroke(padColor.opacity(velocityRing), lineWidth: 3)
+                .padding(8)
+                .allowsHitTesting(false)
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { padHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, height in padHeight = height }
+            }
+        }
+        .overlay {
+            if pressureEnabled {
+                PressureCatcher { peak, y in
+                    fire(y: y, height: Double(padHeight), pressure: peak)
+                }
+            }
+        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isPressed {
+                .onChanged { value in
+                    if !isPressed && !pressureEnabled {
                         isPressed = true
-                        onTap(1.0)
+                        fire(y: Double(value.location.y), height: Double(padHeight), pressure: nil)
                         
                         // Trigger ripple animation
                         rippleScale = 0.3
@@ -205,6 +233,33 @@ struct DrumPadView: View {
 }
 
 extension DrumPadView {
+    private func fire(y: Double, height: Double, pressure: Double?) {
+        isPressed = true
+        let flags = NSEvent.modifierFlags
+        let hit = resolveHit(
+            y,
+            height,
+            pressure,
+            flags.contains(.option),
+            flags.contains(.shift)
+        )
+        velocityRing = Double(hit.velocity)
+        withAnimation(.easeOut(duration: 0.15)) { velocityRing = 0 }
+        onTap(hit)
+    }
+
+    func withHitResolver(_ resolver: @escaping (Double, Double, Double?, Bool, Bool) -> PadHit) -> DrumPadView {
+        var copy = self
+        copy.resolveHit = resolver
+        return copy
+    }
+
+    func withPressure(_ enabled: Bool) -> DrumPadView {
+        var copy = self
+        copy.pressureEnabled = enabled
+        return copy
+    }
+
     /// Sets `chokeBadge` after the trailing-closure init.
     func withChokeBadge(_ badge: String?) -> DrumPadView {
         var copy = self
@@ -217,5 +272,47 @@ extension DrumPadView {
         var copy = self
         copy.presetName = name
         return copy
+    }
+}
+
+/// Collects Force Touch for 12 ms, then reports the peak. A mouse with no pressure reports nil.
+private struct PressureCatcher: NSViewRepresentable {
+    var onHit: (Double?, Double) -> Void
+
+    func makeNSView(context: Context) -> PressureView {
+        let view = PressureView()
+        view.onHit = onHit
+        return view
+    }
+
+    func updateNSView(_ nsView: PressureView, context: Context) {
+        nsView.onHit = onHit
+    }
+}
+
+private final class PressureView: NSView {
+    var onHit: ((Double?, Double) -> Void)?
+    private var samples: [(time: Double, pressure: Double)] = []
+    private var armed = false
+
+    override func mouseDown(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        let y = Double(bounds.height - local.y)
+        samples = [(event.timestamp, Double(event.pressure))]
+        armed = true
+        let start = event.timestamp
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.012) { [weak self] in
+            guard let self, self.armed else { return }
+            self.armed = false
+            let peak = PadVelocity.peakPressure(
+                samples: self.samples.filter { $0.time <= start + 0.012 || $0.time >= start },
+                window: 0.012
+            )
+            self.onHit?(peak, y)
+        }
+    }
+
+    override func pressureChange(with event: NSEvent) {
+        samples.append((event.timestamp, Double(event.pressure)))
     }
 }

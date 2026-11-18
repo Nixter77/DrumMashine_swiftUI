@@ -3,6 +3,9 @@ import Accelerate
 
 /// Pure sample generators. Nonisolated so synthesis can run off the main actor.
 nonisolated enum DrumSynthesizer {
+    /// Peak of one dynamics buffer. Eight center-panned hits at `curve(1)`
+    /// then equal 0.95 before the limiter: `peak * 8 * cos(π/4) = 0.95`.
+    static let dynamicsBufferPeak: Float = Float(0.95 / (8 * cos(Double.pi / 4)))
     
     // MARK: - Core Utilities
     
@@ -1040,8 +1043,13 @@ nonisolated enum DrumSynthesizer {
                 vDSP_vsmul(buffer, 1, &scale, &buffer, 1, vDSP_Length(buffer.count))
             }
         }
-        var level = min(max(preset.volume, 0), 1)
-        if level < 1 {
+        // Legacy presets stay clamped to 1, which is how the golden buffers were rendered.
+        // A dynamics preset may sit above 1 so a quiet model can meet the kit hierarchy.
+        let level: Float = preset.dynamics == nil
+            ? min(max(preset.volume, 0), 1)
+            : max(preset.volume, 0)
+        if level != 1 {
+            var level = level
             vDSP_vsmul(buffer, 1, &level, &buffer, 1, vDSP_Length(buffer.count))
         }
     }
@@ -1053,6 +1061,9 @@ nonisolated enum DrumSynthesizer {
         sampleRate: Double,
         sampleRoot: URL? = nil
     ) -> [Float] {
+        if preset.dynamics != nil {
+            return dynamicsPreview(preset, sampleRate: sampleRate, sampleRoot: sampleRoot)
+        }
         if case .sample(let fileName, _) = preset.source {
             let root = sampleRoot ?? URL(fileURLWithPath: "/dev/null")
             var raw = SampleImporter.render(
@@ -1249,5 +1260,370 @@ nonisolated enum DrumSynthesizer {
             applyAttack(&audioData, sampleRate: sampleRate)
         }
         return audioData
+    }
+
+    /// Full articulation × layer × round-robin bank. Built off the audio thread.
+    static func layerBank(
+        for preset: SoundPreset,
+        sampleRate: Double,
+        sampleRoot: URL? = nil
+    ) -> LayerBank {
+        let dynamics = preset.dynamics ?? Dynamics()
+        let layerCount = dynamics.resolvedLayers
+        let rrCount = dynamics.resolvedRoundRobin
+        let specs = (preset.articulations?.isEmpty == false) ? preset.articulations! : [ArticulationSpec()]
+        var hi = [Float]()
+        var ref = [Float]()
+        hi.reserveCapacity(layerCount)
+        ref.reserveCapacity(layerCount)
+        for layer in 0..<layerCount {
+            let upper = Float(layer + 1) / Float(layerCount)
+            let lower = Float(layer) / Float(layerCount)
+            hi.append(upper)
+            ref.append((lower + upper) * 0.5)
+        }
+        var arts: [[[[Float]]]] = []
+        arts.reserveCapacity(specs.count)
+        for art in specs.indices {
+            var layers: [[[Float]]] = []
+            layers.reserveCapacity(layerCount)
+            for layer in 0..<layerCount {
+                var variants: [[Float]] = []
+                variants.reserveCapacity(rrCount)
+                for rr in 0..<rrCount {
+                    variants.append(renderDynamicsLayer(
+                        preset,
+                        spec: specs[art],
+                        velocity: Double(ref[layer]),
+                        layer: layer,
+                        roundRobin: rr,
+                        sampleRate: sampleRate,
+                        sampleRoot: sampleRoot
+                    ))
+                }
+                layers.append(variants)
+            }
+            if gluesSnareLayers(specs[art]) {
+                let gain = preset.filename.contains("rock-big-room") ? 1.55 : 1
+                AcousticSynthesizer.brightenQuieterSnareLayers(&layers, sampleRate: sampleRate, gain: gain)
+            }
+            arts.append(normalizeArticulation(
+                layers,
+                hierarchy: AcousticKits.bankPlaybackGain(filename: preset.filename)
+            ))
+        }
+        let curve = dynamics.resolvedCurve
+        return LayerBank.make(
+            articulations: arts,
+            velocityHi: hi,
+            velocityRef: ref,
+            curve: curve.curveTable(),
+            useCurve: curve.normalized != .linear
+        )
+    }
+
+    /// One layer, the band nearest velocity 0.8, peak-capped so library limits hold.
+    /// The full bank replaces this buffer once it is ready.
+    private static func dynamicsPreview(
+        _ preset: SoundPreset,
+        sampleRate: Double,
+        sampleRoot: URL?
+    ) -> [Float] {
+        let dynamics = preset.dynamics ?? Dynamics()
+        let layerCount = dynamics.resolvedLayers
+        var best = 0
+        var bestDistance = 99.0
+        for layer in 0..<layerCount {
+            let center = (Double(layer) + 0.5) / Double(layerCount)
+            let distance = abs(center - 0.8)
+            if distance < bestDistance {
+                bestDistance = distance
+                best = layer
+            }
+        }
+        let center = (Double(best) + 0.5) / Double(layerCount)
+        let spec = preset.articulations?.first ?? ArticulationSpec()
+        let raw = renderDynamicsLayer(
+            preset,
+            spec: spec,
+            velocity: center,
+            layer: best,
+            roundRobin: 0,
+            sampleRate: sampleRate,
+            sampleRoot: sampleRoot
+        )
+        return capPeak(finalize(raw, sampleRate: sampleRate), to: dynamicsBufferPeak)
+    }
+
+    /// Scales a finished buffer down to `limit`. Does not raise a quieter hit.
+    private static func capPeak(_ buffer: [Float], to limit: Float) -> [Float] {
+        guard buffer.count > 1, limit > 0 else { return buffer }
+        var peak: Float = 0
+        vDSP_maxmgv(buffer, 1, &peak, vDSP_Length(buffer.count))
+        guard peak > limit else { return buffer }
+        var copy = buffer
+        var scale = limit / peak
+        vDSP_vsmul(copy, 1, &scale, &copy, 1, vDSP_Length(copy.count))
+        copy[copy.count - 1] = 0
+        return copy
+    }
+
+    /// One dynamics hit at an exact velocity. `layerBank` renders through the same function.
+    static func acousticHit(
+        preset: SoundPreset,
+        velocity: Double,
+        articulation: Int = 0,
+        sampleRate: Double
+    ) -> [Float] {
+        let specs = preset.articulations ?? []
+        let spec = (articulation >= 0 && articulation < specs.count) ? specs[articulation] : ArticulationSpec()
+        return renderDynamicsLayer(
+            preset,
+            spec: spec,
+            velocity: velocity,
+            layer: 0,
+            roundRobin: 0,
+            sampleRate: sampleRate,
+            sampleRoot: nil
+        )
+    }
+
+    private static func renderDynamicsLayer(
+        _ preset: SoundPreset,
+        spec: ArticulationSpec,
+        velocity: Double,
+        layer: Int,
+        roundRobin rr: Int,
+        sampleRate: Double,
+        sampleRoot: URL?
+    ) -> [Float] {
+        let dynamics = preset.dynamics ?? Dynamics()
+        if let files = spec.layerFiles, layer < files.count, rr < files[layer].count,
+           let loaded = bundledLayer(files[layer][rr], sampleRate: sampleRate, pitch: preset.pitch, sampleRoot: sampleRoot) {
+            return cosineTail(loaded, sampleRate: sampleRate)
+        }
+        var copy = preset
+        let v = min(1, max(0, velocity))
+        // Brightness is applied as harmonic level inside AcousticSynthesizer.
+        // A per-layer biquad shifts phase and the crossfade cancels.
+        let pitchSemis = (dynamics.pitch ?? 1.5) * (v - 0.5) * 2
+        let detuneSemis = (dynamics.rrDetune ?? 12) * Double(rr) / 100
+        copy.pitch += Float(pitchSemis + detuneSemis)
+        let decayMul = 1 + (dynamics.decay ?? 0.35) * (v - 0.5)
+        copy.decay = max(0.02, copy.decay * Float(decayMul))
+        if let scale = spec.decayScale { copy.decay *= Float(scale) }
+        var raw: [Float]
+        if copy.resolvedVoice == .fx {
+            raw = rawVoice(copy, sampleRate: sampleRate)
+        } else {
+            raw = AcousticSynthesizer.render(
+                preset: copy,
+                spec: spec,
+                velocity: v,
+                layer: layer,
+                roundRobin: rr,
+                sampleRate: sampleRate
+            )
+        }
+        if let lofi = copy.synth?.lofi, lofiIsActive(lofi) {
+            applyLoFi(&raw, lofi)
+        }
+        let seed = 0xA11C_E001 ^ (UInt64(rr) * 0x9E37) ^ (UInt64(layer) * 0x85EB)
+        applyRRVariation(
+            &raw,
+            sampleRate: sampleRate,
+            seed: seed,
+            roundRobin: rr,
+            noise: dynamics.noise ?? 0.2,
+            transient: dynamics.transient ?? 0.5,
+            velocity: v
+        )
+        applyToneAndLevel(&raw, preset: copy, sampleRate: sampleRate)
+        applyADSR(&raw, preset: copy, sampleRate: sampleRate)
+        return cosineTail(trimStoredLength(raw, sampleRate: sampleRate), sampleRate: sampleRate)
+    }
+
+    /// Keeps one kit of 4×2 banks under 48 MB. The last samples are faded by `cosineTail`.
+    private static func trimStoredLength(_ buffer: [Float], sampleRate: Double) -> [Float] {
+        let cap = max(8, Int(1.15 * max(8_000, sampleRate)))
+        guard buffer.count > cap else { return buffer }
+        return Array(buffer.prefix(cap))
+    }
+
+    private static func bundledLayer(
+        _ file: String,
+        sampleRate: Double,
+        pitch: Float,
+        sampleRoot: URL?
+    ) -> [Float]? {
+        if let root = sampleRoot {
+            let raw = SampleImporter.render(fileName: file, sampleRoot: root, sampleRate: sampleRate, pitch: pitch)
+            if raw.contains(where: { $0 != 0 }) { return raw }
+        }
+        guard let url = BundledSamples.url(for: file) else { return nil }
+        let raw = SampleImporter.render(
+            fileName: url.lastPathComponent,
+            sampleRoot: url.deletingLastPathComponent(),
+            sampleRate: sampleRate,
+            pitch: pitch
+        )
+        guard raw.contains(where: { $0 != 0 }) else { return nil }
+        return raw
+    }
+
+    /// Seeded attack click (±0.35 dB) and a short noise so round-robin buffers differ.
+    private static func applyRRVariation(
+        _ buffer: inout [Float],
+        sampleRate: Double,
+        seed: UInt64,
+        roundRobin rr: Int,
+        noise: Double,
+        transient: Double,
+        velocity: Double
+    ) {
+        guard !buffer.isEmpty else { return }
+        let clickDb = (rr % 2 == 0) ? 0.35 : -0.35
+        let click = Float(pow(10, clickDb / 20))
+        let mix = Float(min(1, max(0, transient)))
+        let gain = 1 + (click - 1) * mix
+        let attack = min(buffer.count, max(1, Int(0.010 * sampleRate)))
+        for index in 0..<attack {
+            let env = Float(attack - index) / Float(attack)
+            buffer[index] *= 1 + (gain - 1) * env
+        }
+        var rng = Noise(seed: seed == 0 ? 0x9E37 : seed)
+        let amp = Float(0.03 * min(1, max(0, noise)) * (0.35 + 0.65 * velocity))
+        let noiseCount = min(buffer.count, max(1, Int(0.030 * sampleRate)))
+        for index in 0..<noiseCount {
+            let env = Float(noiseCount - index) / Float(noiseCount)
+            buffer[index] += Float(rng.next()) * amp * env
+        }
+    }
+
+    /// Half-cosine tail and a last sample of 0. No per-layer peak normalize.
+    private static func cosineTail(_ samples: [Float], sampleRate: Double) -> [Float] {
+        guard !samples.isEmpty else { return [0] }
+        var copy = samples
+        for index in copy.indices where !copy[index].isFinite { copy[index] = 0 }
+        var sum = 0.0
+        for sample in copy { sum += Double(sample) }
+        let mean = Float(sum / Double(copy.count))
+        // A constant subtraction leaves a pedestal in the room tail, and the
+        // library's last-5% check hears it after peak normalize. A 20 Hz
+        // highpass removes that offset and lets the tail fall.
+        if abs(mean) >= 0.000_1 {
+            let pole = exp(-2 * Double.pi * 20 / sampleRate)
+            var previousIn = 0.0
+            var previousOut = 0.0
+            for index in copy.indices {
+                let input = Double(copy[index])
+                let output = pole * (previousOut + input - previousIn)
+                previousIn = input
+                previousOut = output
+                copy[index] = Float(output)
+            }
+        }
+        let tenMilliseconds = Int(0.010 * sampleRate)
+        let tenPercent = max(1, copy.count / 10)
+        let fadeCount = min(copy.count, max(1, min(tenMilliseconds, tenPercent)))
+        let fadeStart = copy.count - fadeCount
+        let denom = Double(max(fadeCount - 1, 1))
+        for index in 0..<fadeCount {
+            let x = Double(index) / denom
+            let gain = Float(0.5 * (1.0 + cos(.pi * x)))
+            copy[fadeStart + index] *= gain
+        }
+        copy[copy.count - 1] = 0
+        return copy
+    }
+
+    /// Center and rim articulations. The bank gets a shared wire-band bed on the quieter layers.
+    private static func gluesSnareLayers(_ spec: ArticulationSpec) -> Bool {
+        switch spec.recipe {
+        case .snareCenter, .snareRimshot, .concertSnare:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// One scale for the articulation, then a lift so peak and RMS do not fall with velocity.
+    /// `hierarchy` is applied after that shared peak cap and is never above 1, so a quieter
+    /// voice stays under the cap instead of being lifted back to it.
+    private static func normalizeArticulation(_ layers: [[[Float]]], hierarchy: Float = 1) -> [[[Float]]] {
+        func peak(_ buffer: [Float]) -> Float {
+            var value: Float = 0
+            guard !buffer.isEmpty else { return 0 }
+            vDSP_maxmgv(buffer, 1, &value, vDSP_Length(buffer.count))
+            return value
+        }
+        func rms(_ buffer: [Float]) -> Float {
+            guard !buffer.isEmpty else { return 0 }
+            var sum: Float = 0
+            vDSP_svesq(buffer, 1, &sum, vDSP_Length(buffer.count))
+            return sqrt(sum / Float(buffer.count))
+        }
+        func scaled(_ buffer: [Float], by factor: Float) -> [Float] {
+            guard factor != 1, !buffer.isEmpty else { return buffer }
+            var copy = buffer
+            var factor = factor
+            vDSP_vsmul(copy, 1, &factor, &copy, 1, vDSP_Length(copy.count))
+            if !copy.isEmpty { copy[copy.count - 1] = 0 }
+            return copy
+        }
+        var result = layers
+        var maxPeak: Float = 0
+        for layer in result {
+            for buffer in layer { maxPeak = max(maxPeak, peak(buffer)) }
+        }
+        let headroom: Float = maxPeak > 1e-8 ? dynamicsBufferPeak / maxPeak : 1
+        if headroom != 1 {
+            for index in result.indices {
+                result[index] = result[index].map { scaled($0, by: headroom) }
+            }
+        }
+        var previousPeak: Float = 0
+        var previousRMS: Float = 0
+        for index in result.indices {
+            let probe = result[index].first ?? []
+            var boost: Float = 1
+            let probePeak = peak(probe)
+            let probeRMS = rms(probe)
+            if index > 0 {
+                if probePeak > 1e-8, probePeak < previousPeak { boost = max(boost, previousPeak / probePeak) }
+                if probeRMS > 1e-8, probeRMS < previousRMS { boost = max(boost, previousRMS / probeRMS) }
+            }
+            if boost > 1 {
+                result[index] = result[index].map { scaled($0, by: boost) }
+            }
+            var after = result[index].first ?? []
+            var afterRMS = rms(after)
+            let maxRise = Float(pow(10, 3.8 / 20))
+            if index > 0, previousRMS > 1e-8, afterRMS > previousRMS * maxRise {
+                let down = (previousRMS * maxRise) / afterRMS
+                result[index] = result[index].map { scaled($0, by: down) }
+                after = result[index].first ?? []
+                afterRMS = rms(after)
+            }
+            previousPeak = peak(after)
+            previousRMS = afterRMS
+        }
+        var over: Float = 0
+        for layer in result {
+            for buffer in layer { over = max(over, peak(buffer)) }
+        }
+        if over > dynamicsBufferPeak {
+            let down = dynamicsBufferPeak / over
+            for index in result.indices {
+                result[index] = result[index].map { scaled($0, by: down) }
+            }
+        }
+        let trimmed = min(1, max(0, hierarchy))
+        if trimmed < 0.999 {
+            for index in result.indices {
+                result[index] = result[index].map { scaled($0, by: trimmed) }
+            }
+        }
+        return result
     }
 }

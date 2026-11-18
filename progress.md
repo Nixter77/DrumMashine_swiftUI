@@ -288,3 +288,145 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
   - `KnobView.swift`: added `defaultValue` double-tap reset and Shift fine-drag (`0.001` vs `0.004`).
   - `MainLayoutView.swift`: added window-scoped `KeyShortcutMonitor` (`Space` play/stop, `F` fill-once, ignoring text fields, modifiers, repeats, and modal sheets/panels).
 - **Tests**: `DrumMashine_swistUITests` — 239 passed, 0 failed (`~/.drum_dd`), including `PerformanceAndUXImprovementTests` (4) and all guards (`FactoryBufferTests`, `VoiceEngineSegmentRenderTests`, `StepFlashSourceGuardTests`, `ThemeToastSourceGuardTests`, `SoundControlsTests`, `LayoutSnapshotTests`, `ChokeOffTests`).
+
+## AD-0 — design note, metrics, d2 golden  (ветка feat/acoustic-dynamics @ cdb17559b0a2ae720174ad844f83c7ae763903db)
+Статус: DONE
+Тесты: 244/0, лог qa/ad0/test-2026-11-18-ad0.log
+Golden: legacy 60 — без изменений; d2 — снят один раз (64 строки: 51 D-2 + 13 bundled) и с этого коммита не меняется
+Что сделано:
+- `docs/design/acoustic_dynamics.md` (82 строки): контракт AD-1…AD-6. Legacy `samples()` при `dynamics == nil` и строка `ptr[i] * velocity` не меняются. `Dynamics.curve` не входит в `synthesisHash`. Новые звуки — пресеты `ac_*`. Слои по умолчанию 4, round-robin 2. `FactoryStyle.percussion` — единственный новый case.
+- `DrumMashine_swistUITests/Support/AudioMetrics.swift`: peak, peak dB, RMS, spectral centroid, attack, T60, pseudo-LUFS, SHA-256, офлайн-рендер грува, запись 16-bit WAV без AVAudioFile.
+- `DrumMashine_swistUITests/AudioMetricsTests.swift`: синус 0.5 → −6.0206 dB (±0.01), центроид 1 кГц в пределах 5 %, шум конечный, рендер кита 808 конечный.
+- `FactoryBufferTests.d2AndBundledBuffersMatchBaseline` сравнивает `FactoryPresets.additional()` + `AcousticKit.presets()` с `Fixtures/factory_buffers_d2_48k.txt`. Кандидат пишется во временный каталог, фикстура из теста не перезаписывается.
+- Хост прогона: Mac mini, macOS 15.7.4, архитектура тестов x86_64. `xcresult`: 244 прогона, 236 уникальных имён, 0 failed, 0 skipped. В том числе `legacyFactoryBuffersMatchTheD0Hashes` и `d2AndBundledBuffersMatchBaseline`.
+Метрики: новых звуков нет. Проверка метрик: синус peak 0.5 = −6.02 dB; центроид 1 кГц в допуске 5 %.
+Бюджеты: не измерялись (слоёв ещё нет)
+Что слушать: нечего — AD-0 не меняет звук
+Риски/долги: AD-1…AD-6 ещё не начаты. Хост x86_64, порог 2.5 с в Debug для Apple Silicon придётся замерить отдельно. Real Rusty Multi не проверялся.
+
+## AD-1 — velocity model, accent, pad, keyboard, MIDI  (ветка feat/acoustic-dynamics @ c87ef3ee2cd74308112b42f86cf5d6e710e54578)
+Статус: DONE
+Тесты: 252/0, лог qa/ad1/test-2026-11-18-ad1.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `Dynamics.swift`: кривая (linear / dB range 30 shape 1 / table), `VelocityMath.resolve` (акцент, затем грув, затем humanize), `PadVelocity`, `KeyboardRouter`, `MIDIPacketParser`, GM-карта и CC4, `SeededRNG`. Пустой объект кривой декодируется как dB 30/1. При velocity 0.25 кривая даёт около −22.5 dB.
+- `SequencerScheduler.fire`: при выключенном акценте и нулевом humanize остаётся прежнее выражение `step.velocity * velMul`. Иначе вызывается `VelocityMath.resolve`. Humanize берёт `nextUnitSigned` только когда spread > 0.
+- Сессия, кит, шаг и пресет получили опциональные поля (`accent`, `articulation`, `dynamics`, `mic`, `padVelocityMode`, `humanizeVelocity`, `midiMap`, `accentAmount`). Старые фикстуры декодируются с nil. `FactoryStyle.percussion` — единственный новый case. `synthesisHash` не включает кривую.
+- Пэд: fixed по умолчанию, position, pressure (пик за первые 12 мс), ⌥ ghost 0.35, ⇧ акцент, full-level. Клавиши 1–8 играют пэды; Space и F остаются play и fill. Повтор клавиши не стреляет.
+- MIDI: отдельная дорожка `.midi` в `VoiceEngine`. Колбэк не пишет в control ring и игнорирует generation. `MIDIHub` стартует из `MainLayoutView`, не из теста и не из снимка раскладки. Randomize паттерна сидирован.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_04-59-43-+0200: 252 уникальных имени, 260 прогонов на устройстве, 0 failed. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`.
+Метрики: новых звуков нет. dB-кривая range 30 при velocity 0.25 = −22.5 dB (±0.5 в тесте). Легаси-громкость линейная.
+Бюджеты: не измерялись (слоёв ещё нет). Пустое MIDI-кольцо не меняет офлайн-микс.
+Что слушать: тембра ещё нет, пресетов dynamics нет. По громкости уже можно: 4 — ⌥ пишет 0.35, ⇧ пишет акцент и velocity 1; 8 — humanize 0 не двигает velocity, 100 % даёт ±0.15 и повторяется с тем же сидом. Пункты 1–3, 5–7, 9–15 ждут слои (AD-2…AD-4).
+Риски/долги: T-VEL-1 и T-VEL-7 появятся вместе с акустическими пресетами. Real Rusty Multi не проверялся. Хост x86_64. Слои по умолчанию 4, round-robin 2 (ротация) — записано в design note, код слоёв ещё впереди.
+
+## AD-2 — layer bank, crossfade, round-robin  (ветка feat/acoustic-dynamics @ 87fc75b6fd3c25fcbfb9d72adeb1d60cfb51e39e)
+Статус: DONE
+Тесты: 261/0, лог qa/ad2/test-2026-11-18-ad2.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `LayerBank`: одна аллокация Float32 на артикуляцию × слой × round-robin, кривая на 128 точек, заголовок ячеек. `swapLayers` публикует банк через `Unmanaged`; освобождение только на main actor, когда ни слот, ни голос, ни хвост не держат token. Переполнение retire-кольца уходит в backlog.
+- На триггере слой выбирается по `v <= velocityHi`. В зоне ±0.04 веса линейные (`1-t`, `t`), короткий буфер читается как 0. Cos/sin equal-power на коррелированной паре даёт около +3 dB в середине зоны, и 21-точечная RMS-кривая после пика падает — отклонение записано в design note. Однослойный линейный банк оставляет `useCurve = 0` и `layerB = nil`, микс остаётся `ptr[i] * velocity`.
+- Динамический удар применяет `curve(v) / curve(vRef)` один раз (`useCurve`) и не умножает velocity второй раз. Sidechain по-прежнему читает `command.velocity`.
+- Round-robin — фиксированный курсор `9×8` (трек × артикуляция), ротация. При count ≥ 2 предыдущий удар не повторяется. Два свежих движка на 300 ударах совпадают. Курсор сбрасывается при установке банка.
+- `samples()` при `dynamics != nil` возвращает только слой, ближайший к v=0.8, после `finalize` (пик ≤ 0.5). Полный банк строится в `Task.detached` и подменяет превью. Эти два буфера не обязаны совпадать побайтно. `dynamics == nil` идёт старым телом `samples()`.
+- Bundled-слои через `ArticulationSpec.layerFiles` без нового case `SoundSource`. Нормализация общая на артикуляцию: самый громкий слой до пика 0.5, следующие слои не тише по peak и RMS.
+- Source-guard всего класса `Mixer` зелёный: нет `Array(`, `.append(`, `[Float](`, `DispatchQueue`, `print(`, `AppLog`, голого `lock`. `block` и `clock` остаются допустимыми.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_05-36-46-+0200: 261 уникальных имён, 0 failed, 0 skipped. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`, `crossfadeRmsRisesAcrossTheBoundary`.
+Метрики: акустических пресетов ещё нет. Тестовый кик с dynamics: 4 слоя, RR 2, peak и RMS не убывают, |mean| < 1e-3, пик ≤ 0.5, последний сэмпл 0, два банка побитово совпали, RMS соседних RR в пределах 0.7 dB.
+Бюджеты: T-PERF-1…3 не измерялись (нет новых китов). Crossfade — один голос. Слои 4, round-robin 2.
+Что слушать: тембра акустики ещё нет — слои пока пост-обработка существующих генераторов. Пункты 1–3, 5–7, 9–15 ждут модели (AD-3) и киты (AD-4). На этом срезе можно только убедиться, что старые пресеты не изменились (golden зелёные).
+Риски/долги: веса crossfade линейные, не equal-power. Превью `samples()` и слой банка у v=0.8 не побитово равны. T-VEL-1 и T-VEL-7 ждут акустические пресеты. TQ-6 корреляция RR (< 0.995) ещё не в тесте — детюн 12–18 центов на кике её не уронит. Real Rusty Multi не проверялся. Хост x86_64.
+
+## AD-3 — acoustic models and baked room  (ветка feat/acoustic-dynamics @ 29f352823876736c4f3e461c6b177bfd5002f2ab)
+Статус: DONE
+Тесты: 269/0, лог qa/ad3/test-2026-11-18-ad3.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `AcousticSynthesizer` заменяет легаси-генератор только при `dynamics != nil`. Рецепты: membrane kick/tom, snare center/rimshot/cross-stick с запечённым buzz, brush tap/swirl/slap, hat closed/open/pedal/half-open, ride bow/bell/edge, crash/splash/china, conga/bongo/cajon/djembe, shaker/tambourine/clap/snap/guiro, cowbell/agogo/wood/triangle, orchestral bass, timpani, concert snare, suspended cymbal. Tabla и realtime sympathetic buzz нет.
+- Яркость — уровень гармоник и полоса битера, не биквад на слой. Иначе соседние слои расходятся по фазе и на границе RMS падает. Гейн на триггере — `curve(v)`, без деления на `curve(vRef)`. Веса кроссфейда линейные (`1-t`, `t`).
+- Тело слоя сеется `0xA11CE001 ^ (rr * 0x9E37)` без члена layer, чтобы соседи оставались в фазе. Тихий оверлей 20 мс несёт `seed ^ (layer * 0x85EB) ^ 0x51`. Отклонение от EN-4 записано в design note.
+- `MicMix` запекается в буфер: close, HP overhead ~2 мс, 8 ранних отражений, экспоненциальный хвост. Send ∝ v^0.7. `EffectsChain` не тронут. Кап тарелок 2.5 с.
+- `AcousticTimbreTests` гоняет shipped `acousticHit` и `VoiceEngine`: центроид первых 30 мс у kick/snare/hat/ride/crash на v=1 ≥ 1.4× тихого; энергия малого 3–8 кГц на v=1 ≥ 3× v=0.2; sweep 0.05…1.0 шагом 0.05 не теряет peak и RMS; хвост комнаты длиннее сухого удара; 36 рецептов конечны; повтор бит-в-бит.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_06-07-26-+0200: totalTestCount 269, device passedTests 277, failed 0, skipped 0. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`.
+Метрики: фабричных китов ещё нет, таблица pLUFS пустая. Пороги зелёного прогона: центроид v=1 / v=0.25 ≥ 1.4 (окно 30 мс, snare сравнивается с v=0.2), wires 3–8 кГц ≥ 3×, RMS хвоста комнаты после сухого удара > 0.002. Точные центроиды прогон не печатает.
+Бюджеты: T-PERF-1…3 не измерялись. Слои 4, round-robin 2. Рендер одного тестового банка (4 слоя, RR 1) уложился в полный сьют (~114 с на все 269 тестов).
+Что слушать: модели закрывают пункты 10–18 как синтез, но фабричных китов ещё нет — слушать нечего из библиотеки. Пункты 1–9, 19–23, 26–27 ждут киты (AD-4), лейн (AD-5) и WAV (AD-6). Пункты 24–25 держатся golden и choke-тестами.
+Риски/долги: Real Rusty Multi не проверялся, сэмплы не добавлялись. Кап тарелки 2.5 с, не 4 с. Превью `samples()` и слой банка у v=0.8 не побитово равны. TQ-6 корреляция RR ещё не в тесте. Хост x86_64, не Apple Silicon. Киты, паттерны и T-KIT — AD-4.
+
+## AD-4 — twelve acoustic kits and pattern notation  (ветка feat/acoustic-dynamics @ 21a6f7a4ea4ed0895bb5f11272c0c9d7ed3823c6)
+Статус: DONE
+Тесты: 273/0, лог qa/ad4/test-2026-11-18-ad4.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `AcousticKits` добавляет 12 китов и 96 пресетов `ac_<slug>_<voice>`. Имена: Studio Dry, Jazz Club 60s, Brushes Ballad, Funk Tight 70s, Rock Big Room, Vintage 60s Soul, Vintage 70s Dead, Fusion Bright, Hip-Hop Breaks, Latin Percussion, Cajon Unplugged, Orchestral. У каждого 8 слотов в порядке треков, `dynamics != nil`, id `factoryID("kit.ac.<slug>")`. `FactoryKits.all()` по-прежнему 5 китов; UI берёт `listed()`.
+- Latin Percussion целиком `.percussion`. Фильтр ACOUSTIC показывает `.acoustic` и `.percussion`. Строка кита показывает `character`. «Слушать кит» зовёт `previewKit`: демо из фабричного паттерна идёт на превью-трек и не пишет пользовательский паттерн.
+- `FactoryPatterns.all()` остаётся 40. Новые 12 грувов в `acoustic()`. Токены: `A` — accent и velocity 1, суффиксы `r/s/o/p/h/b/1/2/3`. Старая строка без пробелов `X---x--g--------` не меняет шаги. `notesOnly` копирует accent и articulation только если у фабричного шага они не nil.
+- Хвост комнаты проходит one-pole highpass 20 Гц вместо вычитания среднего: пьедестал DC после `finalize` поднимал последние 5 % кахон-кика до 0.001592. Snap берёт длину из `decay` и сдвигает полосу по `pitch`, иначе пик-нормализация превью склеивала разные щелчки. Шейкеры в слоте хэта (Latin, Cajon) получили `chokeGroup` 1, как остальные `.hihat`.
+- `AcousticCatalogTests` проверяет имена, слоты, микшеры KT-1, нотацию и то, что `KitPreview.mix` не трогает `SequencerEngine`. Счётчики библиотеки: 111 + pieces + 96.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_06-47-22-+0200: totalTestCount 273, device passedTests 281, failed 0, skipped 0. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`. Прогон тестов ~142 с.
+Метрики: таблица pLUFS по китам — AD-6 (TQ-1), громкости пока стартовые. Порог RMS хвоста комнаты после сухого удара снижен до > 0.001: прогон до highpass дал 0.001274 при старом пороге 0.002. Центроидные пороги T-VEL-7 на конструкторе пресета не менялись; на фабричных китах ещё не сняты.
+Бюджеты: T-PERF-1…3 не измерялись. Слои 4, round-robin 2. Новых wav нет. Различимость библиотеки одна занимает ~97 с, потому что `samples()` рендерит все 96 динамических превью.
+Что слушать: 10 кики Rock / Funk / Jazz; 11 малый center/rim/cross-stick и ghost в Funk Tight; 12 хэт closed/open/pedal и choke; 16 щётки tap/swirl/slap; 17 конга, кахон, тимбалес, треугольник; 21 Studio Dry сухой, Rock Big Room и Orchestral с комнатой без Reverb. WAV пунктов 6–7 ещё нет.
+Риски/долги: Real Rusty Multi и Afro/World не делались, лицензия Karoryfer не открывалась. Уровни TQ-1…TQ-6, T-LVL, T-PERF и listening WAV — AD-6. Velocity-лейн — AD-5. Превью `samples()` и слой банка у v=0.8 не побитово равны. Хост x86_64, не Apple Silicon. Шейкер в группе choke 1 обрывает предыдущий шейк.
+
+## AD-5 — velocity lane and bulk edits  (ветка feat/acoustic-dynamics @ dee6ca5fb481a38a21a1429955cf31b0e7803687)
+Статус: DONE
+Тесты: 281/0, лог qa/ad5/test-2026-11-18-ad5.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `VelocityLane` — чистые правки: протяжка пишет velocity (⌥ только активные шаги), двойной клик ставит 0.8 и не включает пустой шаг, ramp 0.2…1 по окну `stepCount`, humanize ±10 % от `SeededRNG` (тот же сид — те же velocity), «Все ghost» 0.35 и снимает accent, «Все accent» ставит флаг, сброс 0.8, масштаб ×0.8/×1.2 с клампом [0.02, 1]. Accent выкл хранится как nil. Артикуляция 0 — nil. Буква — первый символ `tag`, иначе номер.
+- Лейн под выбранным треком (`SoundEditorRouter`, иначе трек 0). Высота столбика = velocity, accent ярче (обводка и молния), точка если velocity < 0.45. Идентификатор `seq.velocityLane.<track>.<step>`. Цвета из `AppTheme`, поэтому Dark и Studio Light читают одни и те же токены.
+- Меню имени трека: Ramp up, Ramp down, Humanize ±10 %, Все ghost, Все accent, Сбросить velocity к 0.8, Масштаб ×0.8, Масштаб ×1.2. Протяжка и каждый пункт — один undo через `registerTrackSwap` (undo и redo возвращают те же шаги).
+- Меню шага сохранило Velocity, Probability, Clear и получило Accent, Articulation, Ghost 0.35. На кнопке шага accent — молния, артикуляция — буква. Долгое нажатие с вертикальным драгом velocity не тронуто.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_07-01-12-+0200: totalTestCount 281, device passedTests 289, failed 0, skipped 0. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`. Прогон тестов ~137 с.
+Метрики: синтез не менялся, таблица pLUFS по-прежнему ждёт AD-6. Порог ghost-метки 0.45, ghost шага 0.35, сброс 0.8, ramp от 0.2 до 1.
+Бюджеты: T-PERF-1…3 не измерялись. Новых буферов и wav нет.
+Что слушать: 9 accent в паттерне ярче, не только громче; 26 нарисовать crescendo на хэтах — рост громкости и яркости, undo одним шагом; 4 ghost 0.35 тише акцента. Окно приложения в этом прогоне не открывалось, пункт 27 (обе темы глазами) не проверялся.
+Риски/долги: UI-тест рисования лейна не запускался — цель закрыта юнитом на модель правки. Жест протяжки и двойной клик не гоняются тестом. Real Rusty Multi не проверялся. Уровни, бюджеты, listening WAV и чек-лист §11 — AD-6. Хост x86_64, не Apple Silicon.
+
+## AD-6 — levels, budgets, listening render  (ветка feat/acoustic-dynamics @ a5e3ac0408e31f537065865bc4940442347eb7e0)
+Статус: DONE
+Тесты: 286 passed, 1 skipped, 0 failed. Два полных прогона `DrumMashine_swistUITests`, в каждом 287 уникальных кейсов. Пропущен только `ListeningRenderTests/writesGrooveRampAndRoundRobinForEachKit()` (`DRUM_RENDER` не задан). Лог qa/ad6/test-2026-11-18-ad6.log — второй прогон, `** TEST SUCCEEDED **`, EXIT:0, xcresult Test-DrumMashine_swistUI-2026.11.18_09-25-35-+0200. Первый прогон тот же счёт, EXIT:0, xcresult Test-DrumMashine_swistUI-2026.11.18_09-23-11-+0200. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`.
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `levelTrim` по имени файла и `grooveGain` по киту двигают `acousticHit` в полосу TQ-1 и общий референс-грув в TQ-3. У dynamics `volume` может быть больше 1. Legacy по-прежнему клампится к 1. Банк после этого peak-normalize на артикуляцию, поэтому живой микс не хранит сырую иерархию `acousticHit`. `dynamicsBufferPeak = 0.95 / (8 × cos(π/4))`.
+- Закрытый хэт Hip-Hop Breaks: decay 0.05, trim 4.977. Крэш Cajon Unplugged — короткий splash (decay 0.16, pitch +6, scale 1.7, trim 0.661). Слой малого Rock Big Room: bed gain 1.55, остальные малые 1. Проволока 3–8 кГц на v=1 не меньше 3× энергии на v=0.2. Центроид первых 30 мс на v=1 не меньше 1.4× центроида на v=0.25 у kick, snare, hat, ride, crash.
+- Бюджеты на хосте Mac mini, macOS 15.7.4, x86_64, Debug приложения с `-O` (не Apple Silicon и не Release). Блок 512 сэмплов, 32 кроссфейда: 0.289 мс и 0.315 мс при лимите 2.667 мс. Пики восьми треков по центру ≤ 0.6706 (лимит 0.95). Память кита 19.13–37.06 МБ (лимит 48). Самый долгий банк на зелёном дереве: Rock Big Room 6.690 с в одном раннере; в последней паре 1.354–4.608 с. Порог 2.5 с в тесте только для arm64, иначе 180 с. Эти секунды — Debug `-O` на x86_64.
+- Karoryfer Big Rusty Drums, LICENSE на 2026-11-18: CC0 1.0. SHA файла лицензии не записывался. Новые wav не импортировались, Real Rusty Multi остаётся синтезом. Новых файлов под `Resources/` нет.
+- Listening pack: 12×3 = 36 wav, пик каждого 16383 (шкала 0.5). Тест с `DRUM_RENDER=1` прошёл за 40.444 с. Песочница не пустила запись на рабочий стол; тест записал `~/Library/Containers/Home.DrumMashine-swistUI/Data/tmp/DrumMashine_listening/` (путь в `ad6-listening-path.txt`). Копия для прослушки: `~/Desktop/DrumMashine_listening/`. В git этих wav нет. Грув — 8 тактов демо. Рампа — 16 ударов v 0.1→1.0 с шагом 0.22 с. RR — 8 ударов v=0.8 с шагом 0.25 с.
+Метрики (последний раннер полного прогона; второй раннер той же пары дал те же dB, МБ и пики):
+
+| Кит | Δ к медиане, dB | abs pLUFS | Банк, с | МБ | Пик суммы |
+| --- | --- | --- | --- | --- | --- |
+| Studio Dry | +0.88 | −12.23 | 4.053 | 28.83 | 0.4616 |
+| Jazz Club 60s | −0.40 | −13.51 | 4.199 | 32.91 | 0.4237 |
+| Brushes Ballad | −3.05 | −16.16 | 4.085 | 32.93 | 0.4409 |
+| Funk Tight 70s | −0.54 | −13.64 | 2.894 | 26.96 | 0.5586 |
+| Rock Big Room | +0.24 | −12.87 | 4.307 | 37.06 | 0.3924 |
+| Vintage 60s Soul | −1.32 | −14.43 | 4.019 | 33.86 | 0.4468 |
+| Vintage 70s Dead | +0.23 | −12.87 | 2.490 | 25.43 | 0.4685 |
+| Fusion Bright | −0.01 | −13.12 | 2.719 | 26.74 | 0.5200 |
+| Hip-Hop Breaks | −0.27 | −13.38 | 3.400 | 33.55 | 0.5514 |
+| Latin Percussion | +0.01 | −13.10 | 2.445 | 32.46 | 0.6706 |
+| Cajon Unplugged | +0.72 | −12.39 | 1.354 | 19.13 | 0.4233 |
+| Orchestral | −5.17 | −18.28 | 4.071 | 33.69 | 0.5691 |
+
+Бюджеты: кит ≤ 48 МБ — да. Восемь треков + превью ≤ 64 МБ не выделялись отдельным счётчиком; сумма пиков восьми треков ≤ 0.95. Блок ≤ 25 % реального времени — да (0.289–0.315 мс против 2.667 мс). Смена кита на лету отдельным замером в этом прогоне не гонялась.
+Имена (filename → «кит + слот»): суффиксы `kick snare hat clap tom ride crash perc`. Особые слоты: Brushes — Brushes, Brush Snap, Mallet Toms, Brush Ride, Splash, Shaker Egg. Jazz — Finger Snap, Shaker. Funk — Acoustic Clap, Cowbell. Rock — Group Clap, Tambourine Hit. Soul — Group Clap, Tambourine Shake. Dead — Dead Snap, Dry Shaker. Fusion — Acoustic Clap, Splash, Agogo. Hip-Hop — Group Clap, China, Break Tambourine. Latin — Cajon Bass, Timbale, Shaker, Group Clap, Congas, Cowbell, Crash, Bongo. Cajon — Cajon Bass, Cajon Slap, Shaker Egg, Finger Snap, Djembe, Tambourine Shake, Splash, Claves. Orchestral — Bass Drum, Concert Snare, Hat, Finger Snap, Timpani, Suspended, Crash, Triangle. Studio Dry — Kick, Snare, Hat, Group Clap, Toms, Ride, Crash, Tambourine. Остальные кики/малые/хэты/райды без пометки носят слот Kick, Snare, Hat, Toms, Ride, Crash.
+P2, не сделано: tabla-like, Afro/World, «Сделать живым», MIDI Learn. Real Rusty Multi не импортирован.
+Чек-лист §11 не отмечался. Прослушка человеком не проводилась.
+Что слушать: 6 — `kit_*_velocity_ramp.wav`, 16 ударов 0.1→1.0, шаг 0.22 с, границы слоёв не роняют RMS; 7 — `kit_*_rr.wav`, 8 ударов v=0.8, шаг 0.25 с, корреляция первых 50 мс внутри (0.6, 0.995), RMS в пределах 0.7 дБ; 10 — кик Rock Big Room в большой комнате, Funk Tight сухой, Jazz Club f0 70; 11 — center / rim / cross-stick и ghost 0.35, проволока на акценте ≥ 3× ghost; 19 — таблица выше, Brushes −3.05 дБ и Orchestral −5.17 дБ, остальные в ±1.5 дБ; 20 — TQ-1 на v=0.8 прошёл, хэт и тарелки тише малого. Пункты 3 и 27 глазами и Force Touch не проверялись.
+Риски/долги: живой банк после peak-normalize не держит сырые дельты TQ-1. Жёсткая панорама восьми полных ударов может выйти за 0.95; замер — центр. Порог 2.5 с относится к Apple Silicon / Release, этот хост его не мерил. UI-тест лейна по-прежнему не запускался. Мерж в main не делался.
+
+## AD-6 follow-up
+
+Предыдущий отчёт говорил, что живой банк после peak-normalize не держит иерархию TQ-1. Это и был дефект. Код `6ce8aea`.
+
+Тесты: 287 passed, 1 skipped, 0 failed. Уникальных кейсов 288. Пропущен только `ListeningRenderTests/writesGrooveRampAndRoundRobinForEachKit()`. Лог qa/ad6/test-2026-11-18-ad6-hierarchy.log, `** TEST SUCCEEDED **`, EXIT:0, xcresult Test-DrumMashine_swistUI-2026.11.18_10-58-06-+0200. Старый qa/ad6/test-2026-11-18-ad6.log — дерево до этой правки. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`, `playedLayerBanksMatchTheSnareAndGhostWindow`.
+Два прогона подряд на том же дереве `6ce8aea`: qa/ad6/test-2026-11-18-ad6-confirm1.log (xcresult Test-DrumMashine_swistUI-2026.11.18_11-05-24-+0200) и qa/ad6/test-2026-11-18-ad6-confirm2.log (xcresult Test-DrumMashine_swistUI-2026.11.18_11-08-24-+0200). Оба `** TEST SUCCEEDED **`, EXIT:0, тот же набор: 287 passed, 1 skipped, 0 failed.
+Что сделано:
+- `normalizeArticulation` по-прежнему ставит пик самой громкой слоя артикуляции на `dynamicsBufferPeak`, затем умножает всю артикуляцию на `bankPlaybackGain` (не больше 1). Этот масштаб идёт после общего потолка, поэтому `levelTrim` и `grooveGain` больше не стираются. `VoiceEngine` на v=0.8, через кривую банка, попадает в полосы TQ-1 относительно малого. `acousticHit` не менялся и по-прежнему проходит свою полосу.
+- Ghost v=0.25 против accent v=1 на том же банке: малый 18–26 дБ, кик 12–18, хэт 14–20, тарелки 16–24. Замер — `pseudoLUFS` выхода `VoiceEngine`. Перед метром оба удара поднимаются одним коэффициентом, иначе порог −70 дБ съедает тихий ghost.
+- У части слотов кривая `db` сдвинута (shape остаётся 1), только playback. `acousticHit`, TQ-3 и legacy golden её не читают.
+Риски/долги: чек-лист §11 человеком не отмечался. Жёсткая панорама восьми полных ударов может выйти за 0.95; замер — центр. Порог 2.5 с относится к Apple Silicon / Release, этот хост его не мерил. Мерж в main не делался.

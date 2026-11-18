@@ -33,6 +33,35 @@ struct FactoryBufferTests {
         _ = written
     }
 
+    /// SHA-256 of the 51 D-2 presets plus the 13 bundled acoustic buffers at 48 kHz.
+    /// Captured at the start of `feat/acoustic-dynamics`. Do not regenerate except in a
+    /// dedicated `AD-<N> GOLDEN:` commit.
+    @Test func d2AndBundledBuffersMatchBaseline() throws {
+        let presets = (FactoryPresets.additional() + AcousticKit.presets())
+            .sorted { $0.filename < $1.filename }
+        #expect(presets.count == 51 + AcousticKit.pieces.count)
+        var lines: [String] = []
+        lines.reserveCapacity(presets.count)
+        for preset in presets {
+            let samples = DrumSynthesizer.samples(for: preset, sampleRate: 48_000)
+            let hex = AudioMetrics.sha256Hex(samples)
+            lines.append("\(preset.filename) \(hex) \(samples.count)")
+        }
+        let text = lines.joined(separator: "\n") + "\n"
+        let written = FileManager.default.temporaryDirectory
+            .appendingPathComponent("factory-hashes-d2-48k.txt")
+        try text.write(to: written, atomically: true, encoding: .utf8)
+
+        let bundle = Bundle(for: StandardPatternsGuard.self)
+        let fixture = try #require(
+            bundle.url(forResource: "factory_buffers_d2_48k", withExtension: "txt", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "factory_buffers_d2_48k", withExtension: "txt")
+        )
+        let expected = try String(contentsOf: fixture, encoding: .utf8)
+        #expect(text == expected)
+        _ = written
+    }
+
     @Test func clapTrackUsesTheClapVoiceAfterLaunch() {
         let engine = SequencerEngine()
         let filenames = engine.tracks.map(\.soundPreset.filename)

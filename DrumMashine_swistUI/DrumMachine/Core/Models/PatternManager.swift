@@ -326,6 +326,12 @@ class PatternManager {
             for step in pattern.tracks[index].steps.indices where step < source.count {
                 pattern.tracks[index].steps[step].isActive = source[step].isActive
                 pattern.tracks[index].steps[step].velocity = source[step].velocity
+                if let accent = source[step].accent {
+                    pattern.tracks[index].steps[step].accent = accent
+                }
+                if let articulation = source[step].articulation {
+                    pattern.tracks[index].steps[step].articulation = articulation
+                }
             }
         }
         patterns[slot] = pattern
