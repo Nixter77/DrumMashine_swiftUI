@@ -514,6 +514,45 @@ class SequencerEngine {
         publishSnapshot()
     }
 
+    /// One undo step for a velocity-lane or track-menu edit. `edit` sees the audible step count.
+    func applyVelocityLane(
+        track: Int,
+        name: String,
+        undoManager: UndoManager?,
+        edit: (inout [SequencerStep], Int) -> Void
+    ) {
+        guard tracks.indices.contains(track) else { return }
+        let before = tracks
+        var steps = before[track].steps
+        let count = min(stepCount.rawValue, steps.count)
+        edit(&steps, count)
+        guard steps != before[track].steps else { return }
+        tracks[track].steps = steps
+        registerTrackSwap(undoManager: undoManager, tracks: before, name: name)
+    }
+
+    /// Humanize ±10 % with the sequencer's seeded counter, so two clicks differ and a replay matches.
+    func humanizeVelocityLane(track: Int, undoManager: UndoManager?) {
+        randomizeCounter &+= 1
+        let seed = SeededRNG.mix(uuid: nil, counter: randomizeCounter)
+        applyVelocityLane(track: track, name: "Humanize ±10 %", undoManager: undoManager) { steps, count in
+            steps = VelocityLane.humanize(steps, count: count, seed: seed)
+        }
+    }
+
+    /// Registers a swap back to `snapshot`. Calling it again from the undo closure is the redo.
+    func registerTrackSwap(undoManager: UndoManager?, tracks snapshot: [SequencerTrack], name: String) {
+        guard let undoManager, snapshot != tracks else { return }
+        undoManager.registerUndo(withTarget: self) { engine in
+            MainActor.assumeIsolated {
+                let back = engine.tracks
+                engine.tracks = snapshot
+                engine.registerTrackSwap(undoManager: undoManager, tracks: back, name: name)
+            }
+        }
+        undoManager.setActionName(name)
+    }
+
     /// Replaces the eight pad sounds and leaves the grid, mute, and gains alone.
     func loadKit(_ kit: DrumKit, undoManager: UndoManager?) {
         let previousSounds = tracks.map(\.soundPreset)

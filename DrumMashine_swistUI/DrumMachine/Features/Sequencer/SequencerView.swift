@@ -92,11 +92,19 @@ struct SequencerTracksView: View {
                     track: $sequencer.tracks[index],
                     trackIndex: index,
                     stepCount: sequencer.stepCount.rawValue,
-                    rowHeight: rowHeight
+                    rowHeight: rowHeight,
+                    sequencer: sequencer,
+                    showsLane: index == selectedTrack
                 )
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// The sound-editor track, or the first row when nothing is open yet.
+    private var selectedTrack: Int {
+        let picked = SoundEditorRouter.shared.trackIndex ?? 0
+        return sequencer.tracks.indices.contains(picked) ? picked : 0
     }
 }
 
@@ -214,8 +222,12 @@ struct SequencerRowView: View {
     let trackIndex: Int
     let stepCount: Int
     var rowHeight: CGFloat = AppLayout.sequencerRowMax
+    var sequencer: SequencerEngine
+    var showsLane = false
+    @Environment(\.undoManager) private var undoManager
     
     var body: some View {
+        VStack(spacing: 2) {
         HStack(spacing: 4) {
             // ── Track Name ──
             HStack(spacing: 5) {
@@ -229,7 +241,7 @@ struct SequencerRowView: View {
                 } label: {
                     Text(track.soundPreset.name)
                         .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                        .foregroundColor(track.isMuted ? AppTheme.textTertiary : AppTheme.textPrimary)
+                        .foregroundColor(trackNameColor)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -238,6 +250,7 @@ struct SequencerRowView: View {
                 .accessibilityIdentifier("sequencer.editSound.\(trackIndex)")
             }
             .frame(width: AppLayout.sequencerTrackWidth, alignment: .leading)
+            .contextMenu { velocityMenu }
             
             // ── Steps (grouped by beats) ──
             let beatCount = stepCount / 4
@@ -252,7 +265,8 @@ struct SequencerRowView: View {
                                 column: stepIndex,
                                 trackIndex: trackIndex,
                                 trackColor: padColor,
-                                buttonHeight: rowHeight
+                                buttonHeight: rowHeight,
+                                articulations: track.soundPreset.articulations ?? []
                             )
                             .opacity(track.isMuted ? 0.35 : 1.0)
                         }
@@ -327,7 +341,43 @@ struct SequencerRowView: View {
             .opacity(track.isMuted ? 0.3 : 1.0)
         }
         .frame(height: rowHeight)
-        .fixedSize(horizontal: false, vertical: true)  // Prevents vertical drift
+        .fixedSize(horizontal: false, vertical: true)
+
+        if showsLane {
+            VelocityLaneStrip(
+                track: $track,
+                trackIndex: trackIndex,
+                stepCount: stepCount,
+                trackColor: padColor,
+                sequencer: sequencer
+            )
+        }
+        }
+    }
+
+    private var trackNameColor: Color {
+        if track.isMuted { return AppTheme.textTertiary }
+        if showsLane { return padColor }
+        return AppTheme.textPrimary
+    }
+
+    @ViewBuilder
+    private var velocityMenu: some View {
+        Button("Ramp up") { editLane("Ramp up") { VelocityLane.ramp($0, count: $1, up: true) } }
+        Button("Ramp down") { editLane("Ramp down") { VelocityLane.ramp($0, count: $1, up: false) } }
+        Button("Humanize ±10 %") { sequencer.humanizeVelocityLane(track: trackIndex, undoManager: undoManager) }
+        Divider()
+        Button("Все ghost") { editLane("Все ghost") { VelocityLane.allGhost($0, count: $1) } }
+        Button("Все accent") { editLane("Все accent") { VelocityLane.allAccent($0, count: $1) } }
+        Button("Сбросить velocity к 0.8") { editLane("Сбросить velocity к 0.8") { VelocityLane.reset($0, count: $1) } }
+        Button("Масштаб ×0.8") { editLane("Масштаб ×0.8") { VelocityLane.scale($0, count: $1, factor: 0.8) } }
+        Button("Масштаб ×1.2") { editLane("Масштаб ×1.2") { VelocityLane.scale($0, count: $1, factor: 1.2) } }
+    }
+
+    private func editLane(_ name: String, _ edit: @escaping ([SequencerStep], Int) -> [SequencerStep]) {
+        sequencer.applyVelocityLane(track: trackIndex, name: name, undoManager: undoManager) { steps, count in
+            steps = edit(steps, count)
+        }
     }
     
     private var padColor: Color {
