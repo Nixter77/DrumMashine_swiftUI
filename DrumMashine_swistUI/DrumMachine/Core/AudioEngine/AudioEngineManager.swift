@@ -116,6 +116,8 @@ class AudioEngineManager {
     // AVAudioEngine core
     let engine = AVAudioEngine()
     private var voiceEngine: VoiceEngine!
+    /// Bumps on every preview so a slower layer bank cannot replace a newer one.
+    private var previewLoadEpoch = 0
     private var trackVolumes = [Float](repeating: 1, count: 8)
     private var trackPans = [Float](repeating: 0, count: 8)
     
@@ -206,6 +208,11 @@ class AudioEngineManager {
     /// Swaps a track buffer and arms the drain timer for the buffer it retires.
     private func swapVoiceSample(track: Int, samples: [Float]) {
         voiceEngine.swapSample(track: track, samples: samples)
+        startRetireDrain()
+    }
+
+    private func swapVoiceLayers(track: Int, bank: LayerBank) {
+        voiceEngine.swapLayers(track: track, bank: bank)
         startRetireDrain()
     }
 
@@ -897,10 +904,13 @@ class AudioEngineManager {
     // MARK: - Sound Library Preview (plays sound without assigning to a track)
     func previewSound(preset: SoundPreset) {
         previewPreset = preset
+        previewLoadEpoch &+= 1
+        let previewEpoch = previewLoadEpoch
         let sampleRate = outputSampleRate
         let parameterHash = preset.synthesisHash
         if let cached = previewCache.samples(id: preset.id, parameterHash: parameterHash, sampleRate: sampleRate) {
             playPreview(cached)
+            scheduleLayerBank(preset, track: VoiceEngine.previewTrack, sampleRate: sampleRate, epoch: previewEpoch, ticket: nil)
             return
         }
         let epoch = sampleInstallEpoch
@@ -912,9 +922,15 @@ class AudioEngineManager {
                 guard epoch == manager.sampleInstallEpoch else { return }
                 guard abs(manager.outputSampleRate - sampleRate) < 0.5 else { return }
                 manager.previewCache.store(samples, id: preset.id, parameterHash: parameterHash, sampleRate: sampleRate)
+                guard manager.previewLoadEpoch == previewEpoch else { return }
                 guard manager.previewPreset?.id == preset.id,
                       manager.previewPreset?.synthesisHash == parameterHash else { return }
                 manager.playPreview(samples)
+            }
+            await MainActor.run {
+                AudioEngineManager.shared.scheduleLayerBank(
+                    preset, track: VoiceEngine.previewTrack, sampleRate: sampleRate, epoch: previewEpoch, ticket: nil
+                )
             }
         }
     }
@@ -952,6 +968,43 @@ class AudioEngineManager {
                 guard manager.trackLoadTicket[trackIndex] == ticket else { return }
                 guard manager.trackPresets[trackIndex]?.id == preset.id else { return }
                 manager.installTrackBuffer(samples, preset: preset, trackIndex: trackIndex)
+            }
+            await MainActor.run {
+                let manager = AudioEngineManager.shared
+                guard epoch == manager.sampleInstallEpoch else { return }
+                guard manager.trackLoadTicket[trackIndex] == ticket else { return }
+                manager.scheduleLayerBank(
+                    preset, track: trackIndex, sampleRate: sampleRate, epoch: epoch, ticket: ticket
+                )
+            }
+        }
+    }
+
+    /// Renders the full layer bank after the progressive buffer is already playing.
+    private func scheduleLayerBank(
+        _ preset: SoundPreset,
+        track: Int,
+        sampleRate: Double,
+        epoch: Int,
+        ticket: Int?
+    ) {
+        guard preset.dynamics != nil else { return }
+        let sampleRoot = self.sampleRoot
+        let presetID = preset.id
+        Task.detached(priority: .utility) {
+            let bank = DrumSynthesizer.layerBank(for: preset, sampleRate: sampleRate, sampleRoot: sampleRoot)
+            await MainActor.run {
+                let manager = AudioEngineManager.shared
+                guard epoch == manager.sampleInstallEpoch || ticket == nil else { return }
+                guard abs(manager.outputSampleRate - sampleRate) < 0.5 else { return }
+                if track == VoiceEngine.previewTrack {
+                    guard manager.previewLoadEpoch == epoch else { return }
+                    guard manager.previewPreset?.id == presetID else { return }
+                } else if let ticket {
+                    guard manager.trackLoadTicket[track] == ticket else { return }
+                    guard manager.trackPresets[track]?.id == presetID else { return }
+                }
+                manager.swapVoiceLayers(track: track, bank: bank)
             }
         }
     }

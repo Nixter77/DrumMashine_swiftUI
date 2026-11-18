@@ -105,6 +105,12 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
         mixer.swapSample(track: track, samples: samples)
     }
 
+    /// Installs a layer bank on the control lane. The caller may release `bank`;
+    /// the engine retains it until no slot, voice, or tail still points into it.
+    func swapLayers(track: Int, bank: LayerBank) {
+        mixer.swapLayers(track: track, bank: bank)
+    }
+
     /// Returns how many retired buffers were freed.
     @discardableResult
     func drainRetired() -> Int {
@@ -174,6 +180,10 @@ nonisolated private final class Mixer: @unchecked Sendable {
     private let panR: UnsafeMutablePointer<Float>
     private let panStepL: UnsafeMutablePointer<Float>
     private let panStepR: UnsafeMutablePointer<Float>
+    /// Layer bank installed on each slot. Token 0 is the legacy single buffer.
+    private let slotLayer: UnsafeMutablePointer<SlotLayer>
+    /// Next round-robin index. 9 slots × 8 articulations. Render thread only.
+    private let rrCursor: UnsafeMutablePointer<Int32>
 
     init(sampleRate: Double, retireCapacity: Int = 1024) {
         precondition(retireCapacity > 0 && retireCapacity & (retireCapacity - 1) == 0)
@@ -215,25 +225,31 @@ nonisolated private final class Mixer: @unchecked Sendable {
         panStepL.initialize(repeating: 0, count: Self.slotCount)
         panStepR = .allocate(capacity: Self.slotCount)
         panStepR.initialize(repeating: 0, count: Self.slotCount)
+        slotLayer = .allocate(capacity: Self.slotCount)
+        slotLayer.initialize(repeating: SlotLayer(), count: Self.slotCount)
+        rrCursor = .allocate(capacity: Self.slotCount * 8)
+        rrCursor.initialize(repeating: 0, count: Self.slotCount * 8)
     }
 
     deinit {
         drainRetired()
         // deinit runs off the audio thread once the node is gone: free anything still parked.
         for index in 0..<backlogCount {
-            if let ptr = backlog[index].ptr, backlog[index].count > 0 {
-                ptr.deinitialize(count: backlog[index].count)
-                ptr.deallocate()
-            }
+            freeRetired(backlog[index])
         }
         backlog.deinitialize(count: Self.backlogCapacity)
         backlog.deallocate()
+        releaseBanksStillHeld()
         for slot in 0..<Self.slotCount {
-            if let ptr = slotPtr[slot] {
+            if slotLayer[slot].token == 0, let ptr = slotPtr[slot] {
                 ptr.deinitialize(count: slotCount[slot])
                 ptr.deallocate()
             }
         }
+        slotLayer.deinitialize(count: Self.slotCount)
+        slotLayer.deallocate()
+        rrCursor.deinitialize(count: Self.slotCount * 8)
+        rrCursor.deallocate()
         voices.deinitialize(count: Self.voiceCount)
         voices.deallocate()
         activeSlots.deinitialize(count: Self.voiceCount)
@@ -311,6 +327,21 @@ nonisolated private final class Mixer: @unchecked Sendable {
         ))
     }
 
+    func swapLayers(track: Int, bank: LayerBank) {
+        guard track >= 0, track < Self.slotCount else { return }
+        let retained = Unmanaged.passRetained(bank)
+        let token = UInt(bitPattern: retained.toOpaque())
+        let command = Command(
+            kind: .swapLayers, track: Int32(track), velocity: 0, gain: 0, pan: 0,
+            atSample: 0, fadeFrames: 0, sampleCount: 0, samplePtr: nil, chokeGroup: -1,
+            bankToken: token
+        )
+        if !controlRing.push(command) {
+            retained.release()
+            _ = lateCounter.wrappingAdd(1, ordering: .relaxed)
+        }
+    }
+
     @discardableResult
     func drainRetired() -> Int {
         var freed = 0
@@ -320,10 +351,7 @@ nonisolated private final class Mixer: @unchecked Sendable {
             if tail == head { return freed }
             freed += 1
             let item = retired[tail & retireMask]
-            if let ptr = item.ptr, item.count > 0 {
-                ptr.deinitialize(count: item.count)
-                ptr.deallocate()
-            }
+            freeRetired(item)
             retiredTail.store(tail + 1, ordering: .releasing)
         }
     }
@@ -406,17 +434,30 @@ nonisolated private final class Mixer: @unchecked Sendable {
             if command.atSample > 0, command.atSample < blockStart {
                 _ = lateCounter.wrappingAdd(1, ordering: .relaxed)
             }
-            guard let ptr = slotPtr[Int(command.track)], slotCount[Int(command.track)] > 0 else { return }
-            if command.chokeGroup >= 0 {
-                choke(group: command.chokeGroup)
+            let trackIndex = Int(command.track)
+            if slotLayer[trackIndex].token != 0 {
+                if command.chokeGroup >= 0 {
+                    choke(group: command.chokeGroup)
+                }
+                startLayerVoice(
+                    track: command.track,
+                    velocity: command.velocity,
+                    choke: command.chokeGroup,
+                    articulation: command.articulation
+                )
+            } else {
+                guard let ptr = slotPtr[trackIndex], slotCount[trackIndex] > 0 else { return }
+                if command.chokeGroup >= 0 {
+                    choke(group: command.chokeGroup)
+                }
+                startVoice(
+                    track: command.track,
+                    velocity: command.velocity,
+                    choke: command.chokeGroup,
+                    ptr: ptr,
+                    count: slotCount[trackIndex]
+                )
             }
-            startVoice(
-                track: command.track,
-                velocity: command.velocity,
-                choke: command.chokeGroup,
-                ptr: ptr,
-                count: slotCount[Int(command.track)]
-            )
             if sidechain.enabled, Int(command.track) == sidechain.source {
                 sidechainEnvelope.trigger(depth: sidechain.depth(velocity: command.velocity), releaseMs: sidechain.releaseMs)
             }
@@ -429,10 +470,34 @@ nonisolated private final class Mixer: @unchecked Sendable {
             let track = Int(command.track)
             let old = slotPtr[track]
             let oldCount = slotCount[track]
+            let oldToken = slotLayer[track].token
             slotPtr[track] = command.samplePtr
             slotCount[track] = Int(command.sampleCount)
+            slotLayer[track] = SlotLayer()
             if let old, !stillUsed(old) {
                 retire(old, count: oldCount)
+            }
+            if oldToken != 0 && !bankReferenced(oldToken) {
+                retireBank(oldToken)
+            }
+        case .swapLayers:
+            let track = Int(command.track)
+            let old = slotPtr[track]
+            let oldCount = slotCount[track]
+            let oldToken = slotLayer[track].token
+            guard command.bankToken != 0,
+                  let raw = UnsafeRawPointer(bitPattern: command.bankToken) else { return }
+            let bank = Unmanaged<LayerBank>.fromOpaque(raw).takeUnretainedValue()
+            slotPtr[track] = nil
+            slotCount[track] = 0
+            slotLayer[track] = bank.slotLayer(token: command.bankToken)
+            let row = track * 8
+            for index in 0..<8 { rrCursor[row + index] = 0 }
+            if let old, oldCount > 0, !stillUsed(old) {
+                retire(old, count: oldCount)
+            }
+            if oldToken != 0, oldToken != command.bankToken, !bankReferenced(oldToken) {
+                retireBank(oldToken)
             }
         }
     }
@@ -451,7 +516,15 @@ nonisolated private final class Mixer: @unchecked Sendable {
         velocity: Float,
         choke: Int32,
         ptr: UnsafeMutablePointer<Float>,
-        count: Int
+        count: Int,
+        bankToken: UInt = 0,
+        layerBPtr: UnsafeMutablePointer<Float>? = nil,
+        layerBCount: Int = 0,
+        gainA: Float = 1,
+        gainB: Float = 0,
+        useCurve: Int32 = 0,
+        playCount: Int = -1,
+        bufferCount: Int = -1
     ) {
         let slot = chooseSlot(track: track)
         let steal = voices[slot].pendingSteal
@@ -459,9 +532,17 @@ nonisolated private final class Mixer: @unchecked Sendable {
         if let oldTail = voices[slot].tailPtr {
             let count = voices[slot].tailCount
             let tailTrack = voices[slot].tailTrack
+            let tailToken = voices[slot].tailBankToken
             voices[slot].tailPtr = nil
             voices[slot].tailRemaining = 0
-            retireIfOrphan(oldTail, count: count, track: tailTrack)
+            voices[slot].tailLayerBPtr = nil
+            voices[slot].tailBankToken = 0
+            voices[slot].tailUseCurve = 0
+            if tailToken != 0 {
+                retireBankIfOrphan(tailToken)
+            } else {
+                retireIfOrphan(oldTail, count: count, track: tailTrack)
+            }
         }
         if voices[slot].active {
             voices[slot].tailPtr = voices[slot].samplePtr
@@ -471,7 +552,22 @@ nonisolated private final class Mixer: @unchecked Sendable {
             voices[slot].tailTrack = voices[slot].track
             voices[slot].tailRemaining = steal
             voices[slot].tailLength = steal
+            voices[slot].tailLayerBPtr = voices[slot].layerBPtr
+            voices[slot].tailLayerBCount = voices[slot].layerBCount
+            voices[slot].tailGainA = voices[slot].gainA
+            voices[slot].tailGainB = voices[slot].gainB
+            voices[slot].tailUseCurve = voices[slot].useCurve
+            voices[slot].tailBufferCount = voices[slot].bufferCount
+            voices[slot].tailBankToken = voices[slot].bankToken
             voices[slot].samplePtr = nil
+            voices[slot].layerBPtr = nil
+            voices[slot].bankToken = 0
+        } else if voices[slot].bankToken != 0 {
+            let token = voices[slot].bankToken
+            voices[slot].bankToken = 0
+            voices[slot].samplePtr = nil
+            voices[slot].layerBPtr = nil
+            retireBankIfOrphan(token)
         } else if let old = voices[slot].samplePtr {
             let count = voices[slot].sampleCount
             let oldTrack = voices[slot].track
@@ -481,15 +577,118 @@ nonisolated private final class Mixer: @unchecked Sendable {
         voices[slot].active = true
         voices[slot].track = track
         voices[slot].samplePtr = ptr
-        voices[slot].sampleCount = count
+        voices[slot].sampleCount = playCount < 0 ? count : playCount
+        voices[slot].bufferCount = bufferCount < 0 ? count : bufferCount
         voices[slot].sampleIndex = 0
         voices[slot].velocity = velocity
         voices[slot].chokeGroup = choke
         voices[slot].chokeRemaining = 0
         voices[slot].chokeLength = 0
         voices[slot].pendingSteal = 0
+        voices[slot].layerBPtr = layerBPtr
+        voices[slot].layerBCount = layerBCount
+        voices[slot].gainA = gainA
+        voices[slot].gainB = gainB
+        voices[slot].useCurve = useCurve
+        voices[slot].bankToken = bankToken
         voices[slot].startOrder = orderCounter.load(ordering: .relaxed)
         orderCounter.store(voices[slot].startOrder + 1, ordering: .relaxed)
+    }
+
+    /// Picks the layer and an optional crossfade partner. Pointer reads only.
+    private func startLayerVoice(track: Int32, velocity: Float, choke: Int32, articulation: Int32) {
+        let info = slotLayer[Int(track)]
+        let artCount = Int(info.articulationCount)
+        let layers = Int(info.layerCount)
+        let rrCount = Int(info.roundRobin)
+        guard artCount > 0, layers > 0, rrCount > 0,
+              let storage = info.storage, let cells = info.cells else { return }
+        var art = Int(articulation)
+        if art < 0 || art >= artCount { art = 0 }
+        let cursorSlot = Int(track) * 8 + min(art, 7)
+        var rr = 0
+        if rrCount > 1 {
+            let cursor = Int(rrCursor[cursorSlot])
+            rr = cursor % rrCount
+            if rr < 0 { rr = 0 }
+            rrCursor[cursorSlot] = Int32((rr + 1) % rrCount)
+        }
+        let v = min(1, max(0, velocity))
+        let artBase = art * layers * rrCount
+        var primary = layers - 1
+        for layer in 0..<layers {
+            if v <= cells[artBase + layer * rrCount].velocityHi {
+                primary = layer
+                break
+            }
+        }
+        var low = primary
+        var high = -1
+        let zone: Float = 0.04
+        if primary + 1 < layers {
+            let boundary = cells[artBase + primary * rrCount].velocityHi
+            if v >= boundary - zone && v <= boundary + zone { high = primary + 1 }
+        }
+        if high < 0, primary > 0 {
+            let boundary = cells[artBase + (primary - 1) * rrCount].velocityHi
+            if v >= boundary - zone && v <= boundary + zone {
+                low = primary - 1
+                high = primary
+            }
+        }
+        var weightLow: Float = 1
+        var weightHigh: Float = 0
+        if high >= 0 {
+            let boundary = cells[artBase + low * rrCount].velocityHi
+            let t = min(1, max(0, (v - (boundary - zone)) / (zone * 2)))
+            // Linear weights. Cos/sin equal-power is about +3 dB on a correlated
+            // pair mid-zone, so the 21-point RMS sweep falls after the peak.
+            weightLow = 1 - t
+            weightHigh = t
+        }
+        let cellA = cells[artBase + low * rrCount + rr]
+        let ptrA = storage.advanced(by: Int(cellA.offset))
+        let countA = Int(cellA.count)
+        var gainA = weightLow
+        var gainB = weightHigh
+        var curveFlag = info.useCurve
+        if curveFlag != 0, let curve = info.curve {
+            let index = min(127, max(0, Int(v * 127 + 0.5)))
+            let gain = curve[index]
+            let refA = cellA.curveAtRef < 1e-8 ? 1 : cellA.curveAtRef
+            gainA = weightLow * gain / refA
+            if high >= 0 {
+                let refB = cells[artBase + high * rrCount + rr].curveAtRef
+                let safeB = refB < 1e-8 ? 1 : refB
+                gainB = weightHigh * gain / safeB
+            }
+        }
+        var ptrB: UnsafeMutablePointer<Float>? = nil
+        var countB = 0
+        if high >= 0 {
+            let cellB = cells[artBase + high * rrCount + rr]
+            ptrB = storage.advanced(by: Int(cellB.offset))
+            countB = Int(cellB.count)
+        } else if curveFlag == 0 {
+            gainA = 1
+        }
+        if ptrB == nil && curveFlag == 0 { curveFlag = 0 }
+        let play = max(countA, countB)
+        startVoice(
+            track: track,
+            velocity: velocity,
+            choke: choke,
+            ptr: ptrA,
+            count: countA,
+            bankToken: info.token,
+            layerBPtr: ptrB,
+            layerBCount: countB,
+            gainA: gainA,
+            gainB: gainB,
+            useCurve: curveFlag,
+            playCount: play,
+            bufferCount: countA
+        )
     }
 
     private func chooseSlot(track: Int32) -> Int {
@@ -544,25 +743,71 @@ nonisolated private final class Mixer: @unchecked Sendable {
     ) {
         for slotIdx in 0..<activeCount {
             let index = activeSlots[slotIdx]
-            if voices[index].tailRemaining > 0,
-               let ptr = voices[index].tailPtr,
-               voices[index].tailIndex < voices[index].tailCount {
+            if voices[index].tailRemaining > 0, let ptr = voices[index].tailPtr {
                 let scale = Float(voices[index].tailRemaining) / Float(max(voices[index].tailLength, 1))
-                let sample = ptr[voices[index].tailIndex] * voices[index].tailVelocity * scale
-                add(sample, track: Int(voices[index].tailTrack), frame: frame, left: left, right: right)
-                voices[index].tailIndex += 1
-                voices[index].tailRemaining -= 1
-                if voices[index].tailRemaining == 0 {
-                    retireIfOrphan(voices[index].tailPtr, count: voices[index].tailCount, track: voices[index].tailTrack)
-                    voices[index].tailPtr = nil
+                if voices[index].tailLayerBPtr == nil && voices[index].tailUseCurve == 0 {
+                    if voices[index].tailIndex < voices[index].tailCount {
+                        let sample = ptr[voices[index].tailIndex] * voices[index].tailVelocity * scale
+                        add(sample, track: Int(voices[index].tailTrack), frame: frame, left: left, right: right)
+                        voices[index].tailIndex += 1
+                        voices[index].tailRemaining -= 1
+                        if voices[index].tailRemaining == 0 {
+                            retireIfOrphan(voices[index].tailPtr, count: voices[index].tailCount, track: voices[index].tailTrack)
+                            voices[index].tailPtr = nil
+                        }
+                    }
+                } else {
+                    var sample: Float = 0
+                    if voices[index].tailIndex < voices[index].tailBufferCount {
+                        sample = ptr[voices[index].tailIndex] * voices[index].tailGainA
+                        if voices[index].tailUseCurve == 0 { sample *= voices[index].tailVelocity }
+                    }
+                    if let bPtr = voices[index].tailLayerBPtr,
+                       voices[index].tailIndex < voices[index].tailLayerBCount {
+                        var extra = bPtr[voices[index].tailIndex] * voices[index].tailGainB
+                        if voices[index].tailUseCurve == 0 { extra *= voices[index].tailVelocity }
+                        sample += extra
+                    }
+                    add(sample * scale, track: Int(voices[index].tailTrack), frame: frame, left: left, right: right)
+                    voices[index].tailIndex += 1
+                    voices[index].tailRemaining -= 1
+                    if voices[index].tailRemaining == 0 {
+                        let token = voices[index].tailBankToken
+                        let tailPtr = voices[index].tailPtr
+                        let tailCount = voices[index].tailCount
+                        let tailTrack = voices[index].tailTrack
+                        voices[index].tailPtr = nil
+                        voices[index].tailLayerBPtr = nil
+                        voices[index].tailBankToken = 0
+                        voices[index].tailUseCurve = 0
+                        if token != 0 {
+                            retireBankIfOrphan(token)
+                        } else {
+                            retireIfOrphan(tailPtr, count: tailCount, track: tailTrack)
+                        }
+                    }
                 }
             }
 
-            guard voices[index].active,
-                  let ptr = voices[index].samplePtr,
-                  voices[index].sampleIndex < voices[index].sampleCount else { continue }
+            guard voices[index].active, let ptr = voices[index].samplePtr else { continue }
+            guard voices[index].sampleIndex < voices[index].sampleCount else { continue }
 
-            var sample = ptr[voices[index].sampleIndex] * voices[index].velocity
+            var sample: Float
+            if voices[index].layerBPtr == nil && voices[index].useCurve == 0 {
+                sample = ptr[voices[index].sampleIndex] * voices[index].velocity
+            } else {
+                sample = 0
+                if voices[index].sampleIndex < voices[index].bufferCount {
+                    sample = ptr[voices[index].sampleIndex] * voices[index].gainA
+                    if voices[index].useCurve == 0 { sample *= voices[index].velocity }
+                }
+                if let bPtr = voices[index].layerBPtr,
+                   voices[index].sampleIndex < voices[index].layerBCount {
+                    var extra = bPtr[voices[index].sampleIndex] * voices[index].gainB
+                    if voices[index].useCurve == 0 { extra *= voices[index].velocity }
+                    sample += extra
+                }
+            }
             var ended = false
             if voices[index].chokeLength > 0 {
                 let scale = Float(max(voices[index].chokeRemaining, 0)) / Float(voices[index].chokeLength)
@@ -655,8 +900,85 @@ nonisolated private final class Mixer: @unchecked Sendable {
         let ptr = voices[index].samplePtr
         let count = voices[index].sampleCount
         let track = voices[index].track
+        let token = voices[index].bankToken
         voices[index].samplePtr = nil
-        retireIfOrphan(ptr, count: count, track: track)
+        voices[index].layerBPtr = nil
+        voices[index].useCurve = 0
+        voices[index].bankToken = 0
+        if token != 0 {
+            retireBankIfOrphan(token)
+        } else {
+            retireIfOrphan(ptr, count: count, track: track)
+        }
+    }
+
+    private func bankReferenced(_ token: UInt) -> Bool {
+        if token == 0 { return false }
+        for slot in 0..<Self.slotCount where slotLayer[slot].token == token { return true }
+        for index in 0..<Self.voiceCount {
+            if voices[index].bankToken == token || voices[index].tailBankToken == token { return true }
+        }
+        return false
+    }
+
+    private func retireBankIfOrphan(_ token: UInt) {
+        guard token != 0, !bankReferenced(token) else { return }
+        retireBank(token)
+    }
+
+    private func retireBank(_ token: UInt) {
+        guard token != 0 else { return }
+        if pushRetired(Retired(token: token)) { return }
+        if backlogCount < Self.backlogCapacity {
+            backlog[backlogCount] = Retired(token: token)
+            backlogCount += 1
+            backlogPublished.store(backlogCount, ordering: .releasing)
+        } else {
+            _ = leakCounter.wrappingAdd(1, ordering: .relaxed)
+        }
+    }
+
+    /// Main-actor drain and engine teardown. Not called from the render callback.
+    private func freeRetired(_ item: Retired) {
+        if item.token != 0 {
+            if let raw = UnsafeRawPointer(bitPattern: item.token) {
+                Unmanaged<LayerBank>.fromOpaque(raw).release()
+            }
+            return
+        }
+        if let ptr = item.ptr, item.count > 0 {
+            ptr.deinitialize(count: item.count)
+            ptr.deallocate()
+        }
+    }
+
+    /// Engine teardown only. A fixed table so this stays off the render callback's allocator.
+    private func releaseBanksStillHeld() {
+        let capacity = Self.voiceCount * 2 + Self.slotCount
+        let seen = UnsafeMutablePointer<UInt>.allocate(capacity: capacity)
+        seen.initialize(repeating: 0, count: capacity)
+        var count = 0
+        func once(_ token: UInt) {
+            guard token != 0 else { return }
+            for index in 0..<count where seen[index] == token { return }
+            if count < capacity {
+                seen[count] = token
+                count += 1
+            }
+            if let raw = UnsafeRawPointer(bitPattern: token) {
+                Unmanaged<LayerBank>.fromOpaque(raw).release()
+            }
+        }
+        for index in 0..<Self.voiceCount {
+            once(voices[index].bankToken)
+            once(voices[index].tailBankToken)
+        }
+        for slot in 0..<Self.slotCount {
+            once(slotLayer[slot].token)
+            slotLayer[slot].token = 0
+        }
+        seen.deinitialize(count: capacity)
+        seen.deallocate()
     }
 
     private func stillUsed(_ ptr: UnsafeMutablePointer<Float>) -> Bool {
@@ -789,6 +1111,20 @@ nonisolated private struct Voice {
     var tailTrack: Int32 = 0
     var tailRemaining = 0
     var tailLength = 0
+    var bufferCount = 0
+    var layerBPtr: UnsafeMutablePointer<Float>? = nil
+    var layerBCount = 0
+    var gainA: Float = 1
+    var gainB: Float = 0
+    var useCurve: Int32 = 0
+    var bankToken: UInt = 0
+    var tailLayerBPtr: UnsafeMutablePointer<Float>? = nil
+    var tailLayerBCount = 0
+    var tailGainA: Float = 1
+    var tailGainB: Float = 0
+    var tailUseCurve: Int32 = 0
+    var tailBufferCount = 0
+    var tailBankToken: UInt = 0
 }
 
 nonisolated enum CommandKind: Int32 {
@@ -796,6 +1132,7 @@ nonisolated enum CommandKind: Int32 {
     // 1 was stopAll; stop now goes through pendingFade.
     case setGain = 2
     case swap = 3
+    case swapLayers = 4
 }
 
 nonisolated struct Command {
@@ -812,9 +1149,11 @@ nonisolated struct Command {
     var generation: Int32 = 0
     var checkGeneration: Bool = false
     var articulation: Int32 = 0
+    var bankToken: UInt = 0
 }
 
 nonisolated private struct Retired {
     var ptr: UnsafeMutablePointer<Float>?
     var count = 0
+    var token: UInt = 0
 }
