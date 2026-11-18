@@ -1340,6 +1340,26 @@ nonisolated enum DrumSynthesizer {
         return finalize(raw, sampleRate: sampleRate)
     }
 
+    /// One dynamics hit at an exact velocity. `layerBank` renders through the same function.
+    static func acousticHit(
+        preset: SoundPreset,
+        velocity: Double,
+        articulation: Int = 0,
+        sampleRate: Double
+    ) -> [Float] {
+        let specs = preset.articulations ?? []
+        let spec = (articulation >= 0 && articulation < specs.count) ? specs[articulation] : ArticulationSpec()
+        return renderDynamicsLayer(
+            preset,
+            spec: spec,
+            velocity: velocity,
+            layer: 0,
+            roundRobin: 0,
+            sampleRate: sampleRate,
+            sampleRoot: nil
+        )
+    }
+
     private static func renderDynamicsLayer(
         _ preset: SoundPreset,
         spec: ArticulationSpec,
@@ -1356,15 +1376,27 @@ nonisolated enum DrumSynthesizer {
         }
         var copy = preset
         let v = min(1, max(0, velocity))
-        let bright = (dynamics.brightness ?? 0.35) * (v * 2 - 1)
-        copy.toneFilter = min(1, max(-1, (copy.toneFilter ?? 0) + Float(bright)))
+        // Brightness is applied as harmonic level inside AcousticSynthesizer.
+        // A per-layer biquad shifts phase and the crossfade cancels.
         let pitchSemis = (dynamics.pitch ?? 1.5) * (v - 0.5) * 2
         let detuneSemis = (dynamics.rrDetune ?? 12) * Double(rr) / 100
         copy.pitch += Float(pitchSemis + detuneSemis)
         let decayMul = 1 + (dynamics.decay ?? 0.35) * (v - 0.5)
         copy.decay = max(0.02, copy.decay * Float(decayMul))
         if let scale = spec.decayScale { copy.decay *= Float(scale) }
-        var raw = rawVoice(copy, sampleRate: sampleRate)
+        var raw: [Float]
+        if copy.resolvedVoice == .fx {
+            raw = rawVoice(copy, sampleRate: sampleRate)
+        } else {
+            raw = AcousticSynthesizer.render(
+                preset: copy,
+                spec: spec,
+                velocity: v,
+                layer: layer,
+                roundRobin: rr,
+                sampleRate: sampleRate
+            )
+        }
         let seed = 0xA11C_E001 ^ (UInt64(rr) * 0x9E37) ^ (UInt64(layer) * 0x85EB)
         applyRRVariation(
             &raw,

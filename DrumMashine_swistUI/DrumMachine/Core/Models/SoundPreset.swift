@@ -12,6 +12,14 @@ nonisolated struct SynthParams: Codable, Equatable, Sendable, Hashable {
     var crash: Crash?
     var perc: Perc?
     var lofi: LoFi?
+    /// Acoustic membrane. Read only when `dynamics != nil`. Nil keeps the legacy kick and tom generators.
+    var membrane: Membrane?
+    /// Acoustic snare. Nil keeps the legacy snare generator.
+    var snareModel: SnareModel?
+    /// Acoustic cymbal scale. Nil keeps the legacy hat, ride, and crash generators.
+    var metal: Metal?
+    /// Acoustic hand drum. Nil keeps the legacy perc generator.
+    var hand: HandDrum?
 
     nonisolated struct Kick: Codable, Equatable, Sendable, Hashable {
         var startHz: Double?
@@ -96,6 +104,31 @@ nonisolated struct SynthParams: Codable, Equatable, Sendable, Hashable {
 
     nonisolated enum PercMode: String, Codable, Equatable, Sendable, Hashable {
         case fm, cowbell, noise
+    }
+
+    /// Round membrane used by kicks and toms. `beater` is 0 felt … 1 plastic.
+    nonisolated struct Membrane: Codable, Equatable, Sendable, Hashable {
+        var f0: Double?
+        var damping: Double?
+        var beater: Double?
+        var port: Bool?
+    }
+
+    /// Shell, wires, and a baked buzz tail. Realtime sympathetic buzz is not this.
+    nonisolated struct SnareModel: Codable, Equatable, Sendable, Hashable {
+        var f0: Double?
+        var wires: Double?
+        var buzz: Double?
+    }
+
+    nonisolated struct Metal: Codable, Equatable, Sendable, Hashable {
+        var scale: Double?
+        var rivets: Double?
+    }
+
+    nonisolated struct HandDrum: Codable, Equatable, Sendable, Hashable {
+        var f0: Double?
+        var slap: Double?
     }
 }
 

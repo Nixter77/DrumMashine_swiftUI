@@ -641,8 +641,8 @@ nonisolated private final class Mixer: @unchecked Sendable {
         if high >= 0 {
             let boundary = cells[artBase + low * rrCount].velocityHi
             let t = min(1, max(0, (v - (boundary - zone)) / (zone * 2)))
-            // Linear weights. Cos/sin equal-power is about +3 dB on a correlated
-            // pair mid-zone, so the 21-point RMS sweep falls after the peak.
+            // Linear weights. Layers share phase, so equal-power would bump about
+            // 3 dB in the middle and the next 0.05 step would fall.
             weightLow = 1 - t
             weightHigh = t
         }
@@ -655,13 +655,10 @@ nonisolated private final class Mixer: @unchecked Sendable {
         if curveFlag != 0, let curve = info.curve {
             let index = min(127, max(0, Int(v * 127 + 0.5)))
             let gain = curve[index]
-            let refA = cellA.curveAtRef < 1e-8 ? 1 : cellA.curveAtRef
-            gainA = weightLow * gain / refA
-            if high >= 0 {
-                let refB = cells[artBase + high * rrCount + rr].curveAtRef
-                let safeB = refB < 1e-8 ? 1 : refB
-                gainB = weightHigh * gain / safeB
-            }
+            // Buffers are peak-normalized per articulation. Dividing by curve(vRef)
+            // makes the next layer quieter at the boundary, so the 0.05 sweep falls.
+            gainA = weightLow * gain
+            if high >= 0 { gainB = weightHigh * gain }
         }
         var ptrB: UnsafeMutablePointer<Float>? = nil
         var countB = 0

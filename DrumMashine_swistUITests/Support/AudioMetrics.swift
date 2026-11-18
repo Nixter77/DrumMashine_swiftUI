@@ -44,13 +44,17 @@ enum AudioMetrics {
         return 20 * log10(Double(value))
     }
 
-    /// Magnitude centroid of a 2048-point FFT over the first 80 ms.
-    static func spectralCentroid(_ samples: [Float], sampleRate: Double) -> Double {
+    /// Magnitude centroid of a 2048-point FFT. The default window is the first 80 ms.
+    static func spectralCentroid(
+        _ samples: [Float],
+        sampleRate: Double,
+        windowSeconds: Double = 0.080
+    ) -> Double {
         let fftSize = 2048
         guard samples.count >= 32, sampleRate > 0 else { return 0 }
-        let limit = min(samples.count, max(fftSize, Int(0.080 * sampleRate)))
+        let windowCount = min(samples.count, max(32, Int(windowSeconds * sampleRate)))
         var windowed = [Float](repeating: 0, count: fftSize)
-        let copyCount = min(fftSize, limit)
+        let copyCount = min(fftSize, windowCount)
         for index in 0..<copyCount {
             let phase = Double(index) / Double(max(copyCount - 1, 1))
             let hann = 0.5 * (1 - cos(2 * Double.pi * phase))
@@ -88,6 +92,50 @@ enum AudioMetrics {
         }
         guard total > 0 else { return 0 }
         return weighted / total
+    }
+
+    /// Sum of FFT power between `lowHz` and `highHz` over `windowSeconds`.
+    static func bandEnergy(
+        _ samples: [Float],
+        sampleRate: Double,
+        lowHz: Double,
+        highHz: Double,
+        windowSeconds: Double = 0.080
+    ) -> Double {
+        let fftSize = 2048
+        guard samples.count >= 32, sampleRate > 0, highHz > lowHz else { return 0 }
+        let windowCount = min(samples.count, max(32, Int(windowSeconds * sampleRate)))
+        var windowed = [Float](repeating: 0, count: fftSize)
+        let copyCount = min(fftSize, windowCount)
+        for index in 0..<copyCount { windowed[index] = samples[index] }
+        guard let setup = vDSP_create_fftsetup(11, FFTRadix(kFFTRadix2)) else { return 0 }
+        defer { vDSP_destroy_fftsetup(setup) }
+        var real = [Float](repeating: 0, count: fftSize / 2)
+        var imag = [Float](repeating: 0, count: fftSize / 2)
+        var magnitudes = [Float](repeating: 0, count: fftSize / 2)
+        real.withUnsafeMutableBufferPointer { realPointer in
+            imag.withUnsafeMutableBufferPointer { imagPointer in
+                magnitudes.withUnsafeMutableBufferPointer { magnitudePointer in
+                    guard let realBase = realPointer.baseAddress,
+                          let imagBase = imagPointer.baseAddress,
+                          let magnitudeBase = magnitudePointer.baseAddress else { return }
+                    windowed.withUnsafeBytes { raw in
+                        guard let complexBase = raw.bindMemory(to: DSPComplex.self).baseAddress else { return }
+                        var split = DSPSplitComplex(realp: realBase, imagp: imagBase)
+                        vDSP_ctoz(complexBase, 2, &split, 1, vDSP_Length(fftSize / 2))
+                        vDSP_fft_zrip(setup, &split, 1, 11, FFTDirection(FFT_FORWARD))
+                        vDSP_zvmags(&split, 1, magnitudeBase, 1, vDSP_Length(fftSize / 2))
+                    }
+                }
+            }
+        }
+        let binHz = sampleRate / Double(fftSize)
+        var energy = 0.0
+        for bin in 1..<(fftSize / 2) {
+            let hz = Double(bin) * binHz
+            if hz >= lowHz, hz < highHz { energy += Double(magnitudes[bin]) }
+        }
+        return energy
     }
 
     /// Time from 10% to 90% of the peak envelope, in milliseconds.
