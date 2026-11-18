@@ -369,3 +369,18 @@ Golden: legacy 60 — без изменений; d2 — без изменени�
 Бюджеты: T-PERF-1…3 не измерялись. Слои 4, round-robin 2. Новых wav нет. Различимость библиотеки одна занимает ~97 с, потому что `samples()` рендерит все 96 динамических превью.
 Что слушать: 10 кики Rock / Funk / Jazz; 11 малый center/rim/cross-stick и ghost в Funk Tight; 12 хэт closed/open/pedal и choke; 16 щётки tap/swirl/slap; 17 конга, кахон, тимбалес, треугольник; 21 Studio Dry сухой, Rock Big Room и Orchestral с комнатой без Reverb. WAV пунктов 6–7 ещё нет.
 Риски/долги: Real Rusty Multi и Afro/World не делались, лицензия Karoryfer не открывалась. Уровни TQ-1…TQ-6, T-LVL, T-PERF и listening WAV — AD-6. Velocity-лейн — AD-5. Превью `samples()` и слой банка у v=0.8 не побитово равны. Хост x86_64, не Apple Silicon. Шейкер в группе choke 1 обрывает предыдущий шейк.
+
+## AD-5 — velocity lane and bulk edits  (ветка feat/acoustic-dynamics @ dee6ca5fb481a38a21a1429955cf31b0e7803687)
+Статус: DONE
+Тесты: 281/0, лог qa/ad5/test-2026-11-18-ad5.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `VelocityLane` — чистые правки: протяжка пишет velocity (⌥ только активные шаги), двойной клик ставит 0.8 и не включает пустой шаг, ramp 0.2…1 по окну `stepCount`, humanize ±10 % от `SeededRNG` (тот же сид — те же velocity), «Все ghost» 0.35 и снимает accent, «Все accent» ставит флаг, сброс 0.8, масштаб ×0.8/×1.2 с клампом [0.02, 1]. Accent выкл хранится как nil. Артикуляция 0 — nil. Буква — первый символ `tag`, иначе номер.
+- Лейн под выбранным треком (`SoundEditorRouter`, иначе трек 0). Высота столбика = velocity, accent ярче (обводка и молния), точка если velocity < 0.45. Идентификатор `seq.velocityLane.<track>.<step>`. Цвета из `AppTheme`, поэтому Dark и Studio Light читают одни и те же токены.
+- Меню имени трека: Ramp up, Ramp down, Humanize ±10 %, Все ghost, Все accent, Сбросить velocity к 0.8, Масштаб ×0.8, Масштаб ×1.2. Протяжка и каждый пункт — один undo через `registerTrackSwap` (undo и redo возвращают те же шаги).
+- Меню шага сохранило Velocity, Probability, Clear и получило Accent, Articulation, Ghost 0.35. На кнопке шага accent — молния, артикуляция — буква. Долгое нажатие с вертикальным драгом velocity не тронуто.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_07-01-12-+0200: totalTestCount 281, device passedTests 289, failed 0, skipped 0. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`. Прогон тестов ~137 с.
+Метрики: синтез не менялся, таблица pLUFS по-прежнему ждёт AD-6. Порог ghost-метки 0.45, ghost шага 0.35, сброс 0.8, ramp от 0.2 до 1.
+Бюджеты: T-PERF-1…3 не измерялись. Новых буферов и wav нет.
+Что слушать: 9 accent в паттерне ярче, не только громче; 26 нарисовать crescendo на хэтах — рост громкости и яркости, undo одним шагом; 4 ghost 0.35 тише акцента. Окно приложения в этом прогоне не открывалось, пункт 27 (обе темы глазами) не проверялся.
+Риски/долги: UI-тест рисования лейна не запускался — цель закрыта юнитом на модель правки. Жест протяжки и двойной клик не гоняются тестом. Real Rusty Multi не проверялся. Уровни, бюджеты, listening WAV и чек-лист §11 — AD-6. Хост x86_64, не Apple Silicon.
