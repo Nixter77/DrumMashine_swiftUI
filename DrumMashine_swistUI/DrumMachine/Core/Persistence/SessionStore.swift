@@ -14,6 +14,14 @@ nonisolated struct SessionState: Codable, Equatable, Sendable {
     var masterVolume: Float
     var limiterEnabled: Bool
     var libraryInspectorOpen: Bool
+    var padVelocityMode: PadVelocityMode = .fixed
+    var fullLevel: Bool = false
+    var velocitySensitivity: VelocitySensitivity = .medium
+    /// 0…100. 100 is ±0.15 velocity. 0 leaves playback untouched.
+    var humanizeVelocity: Double = 0
+    var midiMap: MIDIMap = .gm
+    /// Added to an accented step before the groove multiplier. Clamped to 0…0.4.
+    var accentAmount: Double = 0.2
 
     init(
         tracks: [SequencerTrack],
@@ -25,7 +33,13 @@ nonisolated struct SessionState: Codable, Equatable, Sendable {
         effectsChain: EffectsChain = EffectsChain(),
         masterVolume: Float = 0.85,
         limiterEnabled: Bool = true,
-        libraryInspectorOpen: Bool = true
+        libraryInspectorOpen: Bool = true,
+        padVelocityMode: PadVelocityMode = .fixed,
+        fullLevel: Bool = false,
+        velocitySensitivity: VelocitySensitivity = .medium,
+        humanizeVelocity: Double = 0,
+        midiMap: MIDIMap = .gm,
+        accentAmount: Double = 0.2
     ) {
         self.tracks = tracks
         self.bpm = bpm
@@ -37,6 +51,12 @@ nonisolated struct SessionState: Codable, Equatable, Sendable {
         self.masterVolume = masterVolume
         self.limiterEnabled = limiterEnabled
         self.libraryInspectorOpen = libraryInspectorOpen
+        self.padVelocityMode = padVelocityMode
+        self.fullLevel = fullLevel
+        self.velocitySensitivity = velocitySensitivity
+        self.humanizeVelocity = humanizeVelocity
+        self.midiMap = midiMap
+        self.accentAmount = accentAmount
     }
 }
 
@@ -55,6 +75,12 @@ extension SessionState {
         masterVolume = try container.decodeIfPresent(Float.self, forKey: .masterVolume) ?? 0.85
         limiterEnabled = try container.decodeIfPresent(Bool.self, forKey: .limiterEnabled) ?? true
         libraryInspectorOpen = try container.decodeIfPresent(Bool.self, forKey: .libraryInspectorOpen) ?? true
+        padVelocityMode = try container.decodeIfPresent(PadVelocityMode.self, forKey: .padVelocityMode) ?? .fixed
+        fullLevel = try container.decodeIfPresent(Bool.self, forKey: .fullLevel) ?? false
+        velocitySensitivity = try container.decodeIfPresent(VelocitySensitivity.self, forKey: .velocitySensitivity) ?? .medium
+        humanizeVelocity = try container.decodeIfPresent(Double.self, forKey: .humanizeVelocity) ?? 0
+        midiMap = try container.decodeIfPresent(MIDIMap.self, forKey: .midiMap) ?? .gm
+        accentAmount = try container.decodeIfPresent(Double.self, forKey: .accentAmount) ?? 0.2
     }
 
     /// Eight library presets. Used when no session file exists, not the `sound_N` stubs.
@@ -183,6 +209,12 @@ final class SessionStore {
         state.bpm = engine.bpm
         state.swing = engine.swing
         state.humanize = engine.humanize
+        state.humanizeVelocity = engine.humanizeVelocity
+        state.accentAmount = engine.accentAmount
+        state.padVelocityMode = engine.padVelocityMode
+        state.fullLevel = engine.fullLevel
+        state.velocitySensitivity = engine.velocitySensitivity
+        state.midiMap = engine.midiMap
         state.groove = engine.grooveSettings
         state.stepCount = engine.stepCount
         if let patterns {

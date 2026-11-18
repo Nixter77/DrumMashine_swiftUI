@@ -102,6 +102,20 @@ struct MainLayoutView: View {
             }
         }
         .onAppear {
+            if !showsLayoutForSnapshot {
+                let input = MIDIHub.shared
+                input.attach(audioManager.voiceEngineForScheduler())
+                input.onRecord = { hit in
+                    Task { @MainActor in
+                        AppSequencer.shared.recordPadHit(
+                            trackIndex: hit.track,
+                            velocity: hit.velocity,
+                            accent: false
+                        )
+                    }
+                }
+                input.start()
+            }
             DispatchQueue.main.async {
                 settleLibraryInspector()
                 DispatchQueue.main.async {
@@ -432,34 +446,50 @@ private final class KeyMonitorView: NSView {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        guard let sequencer, isAudioReady?() == true else { return false }
-        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+        guard let sequencer else { return false }
+        guard let hostWindow = window else { return false }
+        let flags = event.modifierFlags
+        let decision = KeyboardRouter.decide(
+            characters: event.charactersIgnoringModifiers ?? "",
+            keyCode: event.keyCode,
+            command: flags.contains(.command),
+            option: flags.contains(.option),
+            control: flags.contains(.control),
+            shift: flags.contains(.shift),
+            isRepeat: event.isARepeat,
+            audioReady: isAudioReady?() == true,
+            isKeyWindow: hostWindow.isKeyWindow && event.window === hostWindow,
+            isPanel: hostWindow is NSPanel,
+            hasSheet: hostWindow.attachedSheet != nil,
+            firstResponderIsText: hostWindow.firstResponder is NSText
+        )
+        switch decision {
+        case .pass:
             return false
-        }
-        guard let hostWindow = window,
-              hostWindow.isKeyWindow,
-              event.window === hostWindow,
-              !(hostWindow is NSPanel),
-              hostWindow.attachedSheet == nil,
-              !(hostWindow.firstResponder is NSText) else {
-            return false
-        }
-        let chars = event.charactersIgnoringModifiers ?? ""
-        if event.keyCode == 49 || chars == " " {
-            if !event.isARepeat {
-                withAnimation(.spring(response: 0.2)) {
-                    sequencer.togglePlayPause()
-                }
+        case .consume:
+            return true
+        case .playToggle:
+            withAnimation(.spring(response: 0.2)) {
+                sequencer.togglePlayPause()
             }
             return true
-        }
-        if chars == "f" || chars == "F" {
-            if !event.isARepeat {
-                sequencer.fillOnce.toggle()
-            }
+        case .fillOnce:
+            sequencer.fillOnce.toggle()
+            return true
+        case .pad(let track, let ghost, let accent):
+            let hit = PadVelocity.interpret(
+                mode: sequencer.padVelocityMode,
+                y: 0,
+                height: 1,
+                pressure: nil,
+                option: ghost,
+                shift: accent,
+                fullLevel: sequencer.fullLevel,
+                sensitivity: sequencer.velocitySensitivity
+            )
+            sequencer.playPad(trackIndex: track, velocity: hit.velocity, accent: hit.accent)
             return true
         }
-        return false
     }
 }
 

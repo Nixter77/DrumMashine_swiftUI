@@ -101,7 +101,7 @@ nonisolated struct SynthParams: Codable, Equatable, Sendable, Hashable {
 
 /// Library filter. The original sixty presets are `.legacy`.
 nonisolated enum FactoryStyle: String, Codable, CaseIterable, Sendable, Equatable, Hashable {
-    case classic808, style909, acoustic, lofi, trap, legacy
+    case classic808, style909, acoustic, lofi, trap, legacy, percussion
 
     var title: String {
         switch self {
@@ -111,6 +111,7 @@ nonisolated enum FactoryStyle: String, Codable, CaseIterable, Sendable, Equatabl
         case .lofi: return "LO-FI"
         case .trap: return "TRAP"
         case .legacy: return "LEGACY"
+        case .percussion: return "PERC"
         }
     }
 }
@@ -157,6 +158,12 @@ nonisolated struct SoundPreset: Identifiable, Codable, Sendable, Equatable {
     var style: FactoryStyle? = nil
     /// Tone filter, -1 (dark lowpass) ... 0 (off) ... +1 (thin highpass). Nil is off.
     var toneFilter: Float? = nil
+    /// Nil keeps the legacy linear gain and the single buffer.
+    var dynamics: Dynamics? = nil
+    /// Nil is one articulation taken from the existing preset fields.
+    var articulations: [ArticulationSpec]? = nil
+    /// Nil means no baked room. Playback does not read this on the legacy path.
+    var mic: MicMix? = nil
 
     nonisolated enum Origin: String, Codable, Sendable, Equatable {
         case factory
@@ -228,6 +235,9 @@ extension SoundPreset {
             style = nil
         }
         toneFilter = try container.decodeIfPresent(Float.self, forKey: .toneFilter)
+        dynamics = try container.decodeIfPresent(Dynamics.self, forKey: .dynamics)
+        articulations = try container.decodeIfPresent([ArticulationSpec].self, forKey: .articulations)
+        mic = try container.decodeIfPresent(MicMix.self, forKey: .mic)
     }
 
     /// Stored `voice`, or the same filename guess the synthesizer used before D-0.
@@ -272,6 +282,20 @@ extension SoundPreset {
         hasher.combine(source)
         hasher.combine(toneFilter)
         hasher.combine(volume)
+        // `curve` is playback-only. A nil dynamics preset hashes exactly as before.
+        if let dynamics {
+            hasher.combine(dynamics.layers)
+            hasher.combine(dynamics.roundRobin)
+            hasher.combine(dynamics.brightness)
+            hasher.combine(dynamics.transient)
+            hasher.combine(dynamics.pitch)
+            hasher.combine(dynamics.decay)
+            hasher.combine(dynamics.noise)
+            hasher.combine(dynamics.humanize)
+            hasher.combine(dynamics.rrDetune)
+        }
+        if let articulations { hasher.combine(articulations) }
+        if let mic { hasher.combine(mic) }
         return hasher.finalize()
     }
 
@@ -294,6 +318,9 @@ extension SoundPreset {
         copy.chokeGroup = source.chokeGroup
         copy.toneFilter = source.toneFilter
         copy.synth = source.synth
+        copy.dynamics = source.dynamics
+        copy.articulations = source.articulations
+        copy.mic = source.mic
         return copy
     }
 }

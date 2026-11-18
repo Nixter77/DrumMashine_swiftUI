@@ -123,6 +123,30 @@ class SequencerEngine {
             publishSnapshot()
         }
     }
+
+    /// Velocity spread, 0…100. 100 is ±0.15. Zero does not touch the scheduler RNG.
+    var humanizeVelocity: Double = 0.0 {
+        didSet {
+            let clamped = max(0, min(100, humanizeVelocity))
+            if clamped != humanizeVelocity { humanizeVelocity = clamped }
+            publishSnapshot()
+        }
+    }
+
+    /// Added to an accented step before the groove multiplier.
+    var accentAmount: Double = 0.2 {
+        didSet {
+            let clamped = max(0, min(0.4, accentAmount))
+            if clamped != accentAmount { accentAmount = clamped }
+            publishSnapshot()
+        }
+    }
+
+    var padVelocityMode: PadVelocityMode = .fixed { didSet { if padVelocityMode != oldValue { publishSnapshot() } } }
+    var fullLevel = false { didSet { if fullLevel != oldValue { publishSnapshot() } } }
+    var velocitySensitivity: VelocitySensitivity = .medium { didSet { if velocitySensitivity != oldValue { publishSnapshot() } } }
+    var midiMap: MIDIMap = .gm { didSet { publishSnapshot() } }
+    private var randomizeCounter: UInt64 = 0
     
     // Groove Quantize: non-destructive timing/velocity feel applied at playback.
     var grooveSettings = GrooveSettings() {
@@ -201,6 +225,12 @@ class SequencerEngine {
             bpmValue = min(300, max(40, session.bpm))
             swing = min(100, max(0, session.swing))
             humanize = min(100, max(0, session.humanize))
+            humanizeVelocity = min(100, max(0, session.humanizeVelocity))
+            accentAmount = min(0.4, max(0, session.accentAmount))
+            padVelocityMode = session.padVelocityMode
+            fullLevel = session.fullLevel
+            velocitySensitivity = session.velocitySensitivity
+            midiMap = session.midiMap
             grooveSettings = session.groove
             stepCount = session.stepCount
         }
@@ -261,6 +291,7 @@ class SequencerEngine {
         wasPlaying: Bool
     ) {
         scheduler.retarget(voiceEngine: voiceEngine, sampleRate: sampleRate)
+        MIDIHub.shared.attach(voiceEngine)
         guard wasPlaying, isPlaying else {
             if !wasPlaying { isPlaying = false }
             return
@@ -332,7 +363,13 @@ class SequencerEngine {
                     return StepSnapshot(isActive: v != nil, velocity: v ?? step.velocity,
                                         probability: v == nil ? 1 : (s >= FillGenerator.regionStart(stepCount: count) ? 1 : step.probability))
                 }
-                return StepSnapshot(isActive: step.isActive, velocity: step.velocity, probability: step.probability)
+                return StepSnapshot(
+                    isActive: step.isActive,
+                    velocity: step.velocity,
+                    probability: step.probability,
+                    accent: step.accent ?? false,
+                    articulation: step.articulation ?? 0
+                )
             }
             return TrackSnapshot(
                 steps: Array(steps),
@@ -340,7 +377,8 @@ class SequencerEngine {
                 isSolo: track.isSolo,
                 volume: track.volume,
                 pan: track.pan,
-                chokeGroup: track.soundPreset.chokeGroup ?? -1
+                chokeGroup: track.soundPreset.chokeGroup ?? -1,
+                dynamicsHumanize: Float(min(0.15, max(0, track.soundPreset.dynamics?.humanize ?? 0)))
             )
         }
         scheduler.replace(PatternSnapshot(
@@ -349,8 +387,15 @@ class SequencerEngine {
             bpm: bpm,
             swing: swing,
             humanize: humanize,
-            groove: GrooveSnapshot(template: activeGroove, settings: grooveSettings)
+            groove: GrooveSnapshot(template: activeGroove, settings: grooveSettings),
+            humanizeVelocity: humanizeVelocity,
+            accentAmount: Float(min(0.4, max(0, accentAmount)))
         ))
+        MIDIHub.shared.route.update(
+            map: midiMap,
+            sensitivity: velocitySensitivity,
+            chokes: tracks.map { $0.soundPreset.chokeGroup ?? -1 }
+        )
         if persist && !suppressSessionSave {
             persistCount += 1
             SessionStore.noteSequencer(self)
@@ -389,7 +434,7 @@ class SequencerEngine {
     
     /// `atStep` overrides the clock. Pads pass nil, so the hit lands on the step the listener hears.
     @MainActor
-    func recordPadHit(trackIndex: Int, velocity: Float, atStep: Int? = nil) {
+    func recordPadHit(trackIndex: Int, velocity: Float, atStep: Int? = nil, accent: Bool = false) {
         guard recordMode != .off, isPlaying else { return }
         guard trackIndex >= 0 && trackIndex < tracks.count else { return }
 
@@ -402,12 +447,14 @@ class SequencerEngine {
         case .overdub:
             track.steps[step].isActive = true
             track.steps[step].velocity = velocity
+            track.steps[step].accent = accent ? true : nil
         case .replace:
             for i in 0..<track.steps.count {
                 track.steps[i].isActive = false
             }
             track.steps[step].isActive = true
             track.steps[step].velocity = velocity
+            track.steps[step].accent = accent ? true : nil
         case .off:
             return
         }
@@ -439,6 +486,14 @@ class SequencerEngine {
             if swing != nextSwing { swing = nextSwing }
             let nextHumanize = min(100, max(0, session.humanize))
             if humanize != nextHumanize { humanize = nextHumanize }
+            let nextVelocityHumanize = min(100, max(0, session.humanizeVelocity))
+            if humanizeVelocity != nextVelocityHumanize { humanizeVelocity = nextVelocityHumanize }
+            let nextAccent = min(0.4, max(0, session.accentAmount))
+            if accentAmount != nextAccent { accentAmount = nextAccent }
+            if padVelocityMode != session.padVelocityMode { padVelocityMode = session.padVelocityMode }
+            if fullLevel != session.fullLevel { fullLevel = session.fullLevel }
+            if velocitySensitivity != session.velocitySensitivity { velocitySensitivity = session.velocitySensitivity }
+            if midiMap != session.midiMap { midiMap = session.midiMap }
             if grooveSettings != session.groove { grooveSettings = session.groove }
             if stepCount != session.stepCount { stepCount = session.stepCount }
         }
@@ -464,10 +519,16 @@ class SequencerEngine {
         let previousSounds = tracks.map(\.soundPreset)
         let previousName = loadedKitName
         let previousEdited = loadedKitEdited
+        let previousAccent = accentAmount
         if let undoManager {
             undoManager.registerUndo(withTarget: self) { engine in
                 MainActor.assumeIsolated {
-                    engine.installSounds(previousSounds, kitName: previousName, edited: previousEdited)
+                    engine.installSounds(
+                        previousSounds,
+                        kitName: previousName,
+                        edited: previousEdited,
+                        accent: previousAccent
+                    )
                 }
             }
             undoManager.setActionName("Загрузить кит")
@@ -476,7 +537,18 @@ class SequencerEngine {
             guard index < kit.sounds.count else { return tracks[index].soundPreset }
             return kit.sounds[index]
         }
-        installSounds(sounds, kitName: kit.name, edited: false)
+        installSounds(sounds, kitName: kit.name, edited: false, accent: kit.resolvedAccentAmount)
+    }
+
+    /// Plays one pad and, while recording, stores the velocity and the accent flag.
+    func playPad(trackIndex: Int, velocity: Float, accent: Bool) {
+        guard tracks.indices.contains(trackIndex) else { return }
+        AudioEngineManager.shared.trigger(
+            trackIndex: trackIndex,
+            velocity: velocity,
+            chokeGroup: tracks[trackIndex].soundPreset.chokeGroup
+        )
+        recordPadHit(trackIndex: trackIndex, velocity: velocity, accent: accent)
     }
 
     func notePadSoundEdited() {
@@ -525,8 +597,9 @@ class SequencerEngine {
         loadedKitEdited = false
     }
 
-    private func installSounds(_ sounds: [SoundPreset], kitName: String?, edited: Bool) {
+    private func installSounds(_ sounds: [SoundPreset], kitName: String?, edited: Bool, accent: Double? = nil) {
         suppressSnapshot = true
+        if let accent { accentAmount = min(0.4, max(0, accent)) }
         for index in tracks.indices where index < sounds.count {
             tracks[index].soundPreset = sounds[index]
         }
@@ -619,11 +692,16 @@ class SequencerEngine {
     }
     
     func randomizePattern(density: Double = 0.3) {
+        randomizeCounter &+= 1
+        let patterns = PatternManager.shared.patterns
+        let index = PatternManager.shared.activePatternIndex
+        let uuid = patterns.indices.contains(index) ? patterns[index].id : nil
+        var rng = SeededRNG(seed: SeededRNG.mix(uuid: uuid, counter: randomizeCounter))
         var copy = tracks
         for trackIndex in copy.indices {
             for stepIndex in copy[trackIndex].steps.indices {
-                copy[trackIndex].steps[stepIndex].isActive = Double.random(in: 0...1) < density
-                copy[trackIndex].steps[stepIndex].velocity = Float.random(in: 0.5...1.0)
+                copy[trackIndex].steps[stepIndex].isActive = rng.nextUnit() < density
+                copy[trackIndex].steps[stepIndex].velocity = Float(0.5 + 0.5 * rng.nextUnit())
             }
         }
         tracks = copy

@@ -31,6 +31,8 @@ struct TransportBarView: View {
             barDivider
             swingControl
             humanizeControl
+            velocityHumanizeControl
+            velocityInputControl
             GrooveControlView(sequencer: sequencer)
             recordControl
             Spacer(minLength: 8)
@@ -51,6 +53,8 @@ struct TransportBarView: View {
             HStack(spacing: 12) {
                 swingControl
                 humanizeControl
+                velocityHumanizeControl
+                velocityInputControl
                 GrooveControlView(sequencer: sequencer)
                 recordControl
                 Spacer(minLength: 8)
@@ -223,6 +227,64 @@ struct TransportBarView: View {
                 .font(.system(.caption, design: .monospaced).weight(.medium))
                 .foregroundColor(AppTheme.textSecondary)
                 .frame(width: 32)
+        }
+    }
+
+    private var velocityHumanizeControl: some View {
+        HStack(spacing: 8) {
+            Text("VEL")
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+                .foregroundColor(AppTheme.textTertiary)
+            Slider(value: $sequencer.humanizeVelocity, in: 0...100, step: 5)
+                .tint(AppTheme.accent)
+                .frame(minWidth: 70, idealWidth: 100, maxWidth: 140)
+            Text("\(Int(sequencer.humanizeVelocity))%")
+                .font(.system(.caption, design: .monospaced).weight(.medium))
+                .foregroundColor(AppTheme.textSecondary)
+                .frame(width: 32)
+                .accessibilityIdentifier("transport.humanizeVelocity")
+        }
+        .help("Разброс velocity. 0% оставляет удары как записаны.")
+    }
+
+    private var velocityInputControl: some View {
+        HStack(spacing: 6) {
+            Picker("PAD", selection: $sequencer.padVelocityMode) {
+                Text("FIX").tag(PadVelocityMode.fixed)
+                Text("POS").tag(PadVelocityMode.position)
+                Text("PRS").tag(PadVelocityMode.pressure)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 132)
+            .accessibilityIdentifier("transport.padVelocity")
+            .help("Пэд: фиксированная velocity, позиция по вертикали, или Force Touch")
+
+            Toggle(isOn: $sequencer.fullLevel) {
+                Text("FULL")
+                    .font(.system(.caption2, design: .monospaced).weight(.bold))
+            }
+            .toggleStyle(.button)
+            .accessibilityIdentifier("transport.fullLevel")
+            .help("Full level: каждый удар velocity 1")
+
+            Picker("FEEL", selection: $sequencer.velocitySensitivity) {
+                Text("S").tag(VelocitySensitivity.soft)
+                Text("M").tag(VelocitySensitivity.medium)
+                Text("H").tag(VelocitySensitivity.hard)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 96)
+            .accessibilityIdentifier("transport.sensitivity")
+            .help("Чувствительность пэда и MIDI: soft, medium, hard")
+
+            TimelineView(.periodic(from: .now, by: 0.05)) { _ in
+                Circle()
+                    .fill(MIDIHub.shared.activity.isLit() ? AppTheme.accentSuccess : AppTheme.textTertiary.opacity(0.45))
+                    .frame(width: 8, height: 8)
+                    .accessibilityIdentifier("transport.midi")
+                    .accessibilityLabel("MIDI")
+            }
+            .help("MIDI: точка загорается на входящей ноте")
         }
     }
 

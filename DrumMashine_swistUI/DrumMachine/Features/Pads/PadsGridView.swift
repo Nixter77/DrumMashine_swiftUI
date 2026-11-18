@@ -32,11 +32,11 @@ struct PadsGridView: View {
         VStack(spacing: 0) {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(0..<8, id: \.self) { index in
-                    DrumPadView(pad: pads[index], padIndex: index) { velocity in
-                        AudioEngineManager.shared.trigger(trackIndex: index, velocity: velocity, chokeGroup: padChokeGroup(track: index))
+                    DrumPadView(pad: pads[index], padIndex: index) { hit in
+                        AudioEngineManager.shared.trigger(trackIndex: index, velocity: hit.velocity, chokeGroup: padChokeGroup(track: index))
                         if let seq = sequencer {
                             Task { @MainActor in
-                                seq.recordPadHit(trackIndex: index, velocity: velocity)
+                                seq.recordPadHit(trackIndex: index, velocity: hit.velocity, accent: hit.accent)
                             }
                         }
                     } onLongPress: {
@@ -48,6 +48,19 @@ struct PadsGridView: View {
                     }
                     .withChokeBadge(chokeBadge(track: index))
                     .withPresetName(presetName(track: index))
+                    .withPressure(sequencer?.padVelocityMode == .pressure)
+                    .withHitResolver { y, height, pressure, option, shift in
+                        PadVelocity.interpret(
+                            mode: sequencer?.padVelocityMode ?? .fixed,
+                            y: y,
+                            height: height,
+                            pressure: pressure,
+                            option: option,
+                            shift: shift,
+                            fullLevel: sequencer?.fullLevel ?? false,
+                            sensitivity: sequencer?.velocitySensitivity ?? .medium
+                        )
+                    }
                     .dropDestination(for: URL.self) { urls, _ in
                         guard let url = urls.first, let sequencer else { return false }
                         let track = index

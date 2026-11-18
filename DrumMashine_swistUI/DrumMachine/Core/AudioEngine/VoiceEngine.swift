@@ -50,23 +50,33 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
     func consumePreLimiterPeak() -> Float { mixer.consumePreLimiterPeak() }
 
     /// Each lane is a single-producer ring. `.sequencer` is written only by the
-    /// scheduler queue; `.control` only by the main actor (pads, gains, swaps, preview).
-    /// Never write one lane from two threads.
-    enum Lane: Sendable { case control, sequencer }
+    /// scheduler queue; `.control` only by the main actor (pads, gains, swaps, preview);
+    /// `.midi` only by the CoreMIDI callback. Never write one lane from two threads.
+    enum Lane: Sendable { case control, sequencer, midi }
 
     /// `atSample <= 0` means "now": applied at the start of the next block, never counted late.
+    /// MIDI ignores `generation`, same as a pad.
     func trigger(
         track: Int, velocity: Float, chokeGroup: Int, atSample: Int64,
-        generation: Int? = nil, lane: Lane = .control
+        generation: Int? = nil, lane: Lane = .control, articulation: Int = 0
     ) {
         mixer.trigger(
             track: track,
             velocity: velocity,
             chokeGroup: chokeGroup,
             atSample: atSample,
-            generation: generation,
-            ring: lane == .sequencer ? mixer.sequencerRing : mixer.controlRing
+            generation: lane == .midi ? nil : generation,
+            articulation: articulation,
+            ring: ring(for: lane)
         )
+    }
+
+    private func ring(for lane: Lane) -> CommandRing {
+        switch lane {
+        case .control: return mixer.controlRing
+        case .sequencer: return mixer.sequencerRing
+        case .midi: return mixer.midiRing
+        }
     }
 
     /// Sequencer `stop` bumps this so triggers already in the ring are dropped.
@@ -82,7 +92,7 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
     func setTrackGain(track: Int, gain: Float, pan: Float, lane: Lane = .control) {
         mixer.setTrackGain(
             track: track, gain: gain, pan: pan,
-            ring: lane == .sequencer ? mixer.sequencerRing : mixer.controlRing
+            ring: ring(for: lane)
         )
     }
 
@@ -119,9 +129,10 @@ nonisolated private final class Mixer: @unchecked Sendable {
 
     private let voices: UnsafeMutablePointer<Voice>
     private let activeSlots: UnsafeMutablePointer<Int>
-    /// One SPSC ring per producer thread; the render thread drains both.
+    /// One SPSC ring per producer thread; the render thread drains all three.
     let controlRing = CommandRing(capacity: ringCapacity)
     let sequencerRing = CommandRing(capacity: ringCapacity)
+    let midiRing = CommandRing(capacity: ringCapacity)
     private let retired: UnsafeMutablePointer<Retired>
     private let retireCapacity: Int
     private let retireMask: Int
@@ -261,14 +272,16 @@ nonisolated private final class Mixer: @unchecked Sendable {
     }
 
     func trigger(
-        track: Int, velocity: Float, chokeGroup: Int, atSample: Int64, generation: Int?, ring: CommandRing
+        track: Int, velocity: Float, chokeGroup: Int, atSample: Int64,
+        generation: Int?, articulation: Int = 0, ring: CommandRing
     ) {
         guard track >= 0, track < Self.slotCount else { return }
         enqueue(ring, Command(
             kind: .trigger, track: Int32(track), velocity: velocity,
             gain: 0, pan: 0, atSample: atSample, fadeFrames: 0,
             sampleCount: 0, samplePtr: nil, chokeGroup: Int32(chokeGroup),
-            generation: Int32(generation ?? 0), checkGeneration: generation != nil
+            generation: Int32(generation ?? 0), checkGeneration: generation != nil,
+            articulation: Int32(articulation)
         ))
     }
 
@@ -347,15 +360,18 @@ nonisolated private final class Mixer: @unchecked Sendable {
             let absolute = blockStart + Int64(segmentStart)
             drain(controlRing, absolute: absolute, blockStart: blockStart)
             drain(sequencerRing, absolute: absolute, blockStart: blockStart)
+            drain(midiRing, absolute: absolute, blockStart: blockStart)
             if !panPlanned {
                 // After frame 0's commands, so a setGain at the block start ramps this block.
                 planPan(frameCount: frameCount)
                 panPlanned = true
             }
             // No command can become due before the next boundary, so the hot loop skips drain.
+            // Same-sample order is control, then sequencer, then midi.
             let segmentEnd = min(
                 nextDueFrame(controlRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount),
-                nextDueFrame(sequencerRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount)
+                nextDueFrame(sequencerRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount),
+                nextDueFrame(midiRing, after: segmentStart, blockStart: blockStart, frameCount: frameCount)
             )
             let activeCount = buildActiveSlots()
             if activeCount == 0 && sidechainEnvelope.isIdle && gainSettled {
@@ -795,6 +811,7 @@ nonisolated struct Command {
     var chokeGroup: Int32 = -1
     var generation: Int32 = 0
     var checkGeneration: Bool = false
+    var articulation: Int32 = 0
 }
 
 nonisolated private struct Retired {

@@ -5,6 +5,8 @@ nonisolated struct StepSnapshot: Sendable {
     var isActive: Bool
     var velocity: Float
     var probability: Float
+    var accent: Bool = false
+    var articulation: Int = 0
 }
 
 nonisolated struct TrackSnapshot: Sendable {
@@ -14,6 +16,8 @@ nonisolated struct TrackSnapshot: Sendable {
     var volume: Float
     var pan: Float
     var chokeGroup: Int
+    /// Preset velocity spread, 0…0.15. The session knob is on the pattern snapshot.
+    var dynamicsHumanize: Float = 0
 }
 
 nonisolated struct PatternSnapshot: Sendable {
@@ -23,6 +27,10 @@ nonisolated struct PatternSnapshot: Sendable {
     var swing: Double
     var humanize: Double
     var groove: GrooveSnapshot = .clean
+    /// 0…100. Zero does not touch the scheduler RNG.
+    var humanizeVelocity: Double = 0
+    /// Added to an accented step before the groove multiplier. 0…0.4.
+    var accentAmount: Float = 0.2
 
     static let empty = PatternSnapshot(tracks: [], stepCount: 16, bpm: 120, swing: 0, humanize: 0)
 }
@@ -87,6 +95,7 @@ nonisolated final class SequencerScheduler: @unchecked Sendable {
     private var pendingTrack = [Int](repeating: 0, count: 16)
     private var pendingVelocity = [Float](repeating: 0, count: 16)
     private var pendingChoke = [Int](repeating: 0, count: 16)
+    private var pendingArticulation = [Int](repeating: 0, count: 16)
     private var pendingTime = [Int64](repeating: 0, count: 16)
 
     private let publishedAnchor = Atomic<Int64>(0)
@@ -324,8 +333,25 @@ nonisolated final class SequencerScheduler: @unchecked Sendable {
             guard pending < pendingTrack.count else { break }
             let grooved = groove.isActive && groove.isOn(track: index)
             pendingTrack[pending] = index
-            pendingVelocity[pending] = grooved ? min(1, max(0, step.velocity * velMul)) : step.velocity
+            let spread = VelocityMath.spread(
+                sessionPercent: snap.humanizeVelocity,
+                dynamicsHumanize: Double(track.dynamicsHumanize)
+            )
+            if !step.accent && spread == 0 {
+                pendingVelocity[pending] = grooved ? min(1, max(0, step.velocity * velMul)) : step.velocity
+            } else {
+                let signed = spread > 0 ? nextUnitSigned() : 0
+                pendingVelocity[pending] = VelocityMath.resolve(
+                    velocity: step.velocity,
+                    accent: step.accent,
+                    accentAmount: snap.accentAmount,
+                    grooveMultiplier: grooved ? velMul : nil,
+                    humanizeSpread: spread,
+                    unitSigned: signed
+                )
+            }
             pendingChoke[pending] = track.chokeGroup
+            pendingArticulation[pending] = step.articulation
             pendingTime[pending] = grooved ? grooveTime : plainTime
             pending += 1
         }
@@ -336,6 +362,7 @@ nonisolated final class SequencerScheduler: @unchecked Sendable {
                 while j > 0 && pendingTime[j - 1] > pendingTime[j] {
                     pendingTime.swapAt(j - 1, j); pendingTrack.swapAt(j - 1, j)
                     pendingVelocity.swapAt(j - 1, j); pendingChoke.swapAt(j - 1, j)
+                    pendingArticulation.swapAt(j - 1, j)
                     j -= 1
                 }
             }
@@ -349,7 +376,8 @@ nonisolated final class SequencerScheduler: @unchecked Sendable {
                 chokeGroup: pendingChoke[i],
                 atSample: at,
                 generation: generation,
-                lane: .sequencer
+                lane: .sequencer,
+                articulation: pendingArticulation[i]
             )
         }
     }
