@@ -418,3 +418,15 @@ P2, не сделано: tabla-like, Afro/World, «Сделать живым», 
 Чек-лист §11 не отмечался. Прослушка человеком не проводилась.
 Что слушать: 6 — `kit_*_velocity_ramp.wav`, 16 ударов 0.1→1.0, шаг 0.22 с, границы слоёв не роняют RMS; 7 — `kit_*_rr.wav`, 8 ударов v=0.8, шаг 0.25 с, корреляция первых 50 мс внутри (0.6, 0.995), RMS в пределах 0.7 дБ; 10 — кик Rock Big Room в большой комнате, Funk Tight сухой, Jazz Club f0 70; 11 — center / rim / cross-stick и ghost 0.35, проволока на акценте ≥ 3× ghost; 19 — таблица выше, Brushes −3.05 дБ и Orchestral −5.17 дБ, остальные в ±1.5 дБ; 20 — TQ-1 на v=0.8 прошёл, хэт и тарелки тише малого. Пункты 3 и 27 глазами и Force Touch не проверялись.
 Риски/долги: живой банк после peak-normalize не держит сырые дельты TQ-1. Жёсткая панорама восьми полных ударов может выйти за 0.95; замер — центр. Порог 2.5 с относится к Apple Silicon / Release, этот хост его не мерил. UI-тест лейна по-прежнему не запускался. Мерж в main не делался.
+
+## AD-6 follow-up
+
+Предыдущий отчёт говорил, что живой банк после peak-normalize не держит иерархию TQ-1. Это и был дефект. Код `6ce8aea`.
+
+Тесты: 287 passed, 1 skipped, 0 failed. Уникальных кейсов 288. Пропущен только `ListeningRenderTests/writesGrooveRampAndRoundRobinForEachKit()`. Лог qa/ad6/test-2026-11-18-ad6-hierarchy.log, `** TEST SUCCEEDED **`, EXIT:0, xcresult Test-DrumMashine_swistUI-2026.11.18_10-58-06-+0200. Старый qa/ad6/test-2026-11-18-ad6.log — дерево до этой правки. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`, `playedLayerBanksMatchTheSnareAndGhostWindow`.
+Два прогона подряд на том же дереве `6ce8aea`: qa/ad6/test-2026-11-18-ad6-confirm1.log (xcresult Test-DrumMashine_swistUI-2026.11.18_11-05-24-+0200) и qa/ad6/test-2026-11-18-ad6-confirm2.log (xcresult Test-DrumMashine_swistUI-2026.11.18_11-08-24-+0200). Оба `** TEST SUCCEEDED **`, EXIT:0, тот же набор: 287 passed, 1 skipped, 0 failed.
+Что сделано:
+- `normalizeArticulation` по-прежнему ставит пик самой громкой слоя артикуляции на `dynamicsBufferPeak`, затем умножает всю артикуляцию на `bankPlaybackGain` (не больше 1). Этот масштаб идёт после общего потолка, поэтому `levelTrim` и `grooveGain` больше не стираются. `VoiceEngine` на v=0.8, через кривую банка, попадает в полосы TQ-1 относительно малого. `acousticHit` не менялся и по-прежнему проходит свою полосу.
+- Ghost v=0.25 против accent v=1 на том же банке: малый 18–26 дБ, кик 12–18, хэт 14–20, тарелки 16–24. Замер — `pseudoLUFS` выхода `VoiceEngine`. Перед метром оба удара поднимаются одним коэффициентом, иначе порог −70 дБ съедает тихий ghost.
+- У части слотов кривая `db` сдвинута (shape остаётся 1), только playback. `acousticHit`, TQ-3 и legacy golden её не читают.
+Риски/долги: чек-лист §11 человеком не отмечался. Жёсткая панорама восьми полных ударов может выйти за 0.95; замер — центр. Порог 2.5 с относится к Apple Silicon / Release, этот хост его не мерил. Мерж в main не делался.
