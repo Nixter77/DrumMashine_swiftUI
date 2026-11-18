@@ -337,3 +337,19 @@ Golden: legacy 60 — без изменений; d2 — без изменени�
 Бюджеты: T-PERF-1…3 не измерялись (нет новых китов). Crossfade — один голос. Слои 4, round-robin 2.
 Что слушать: тембра акустики ещё нет — слои пока пост-обработка существующих генераторов. Пункты 1–3, 5–7, 9–15 ждут модели (AD-3) и киты (AD-4). На этом срезе можно только убедиться, что старые пресеты не изменились (golden зелёные).
 Риски/долги: веса crossfade линейные, не equal-power. Превью `samples()` и слой банка у v=0.8 не побитово равны. T-VEL-1 и T-VEL-7 ждут акустические пресеты. TQ-6 корреляция RR (< 0.995) ещё не в тесте — детюн 12–18 центов на кике её не уронит. Real Rusty Multi не проверялся. Хост x86_64.
+
+## AD-3 — acoustic models and baked room  (ветка feat/acoustic-dynamics @ 29f352823876736c4f3e461c6b177bfd5002f2ab)
+Статус: DONE
+Тесты: 269/0, лог qa/ad3/test-2026-11-18-ad3.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `AcousticSynthesizer` заменяет легаси-генератор только при `dynamics != nil`. Рецепты: membrane kick/tom, snare center/rimshot/cross-stick с запечённым buzz, brush tap/swirl/slap, hat closed/open/pedal/half-open, ride bow/bell/edge, crash/splash/china, conga/bongo/cajon/djembe, shaker/tambourine/clap/snap/guiro, cowbell/agogo/wood/triangle, orchestral bass, timpani, concert snare, suspended cymbal. Tabla и realtime sympathetic buzz нет.
+- Яркость — уровень гармоник и полоса битера, не биквад на слой. Иначе соседние слои расходятся по фазе и на границе RMS падает. Гейн на триггере — `curve(v)`, без деления на `curve(vRef)`. Веса кроссфейда линейные (`1-t`, `t`).
+- Тело слоя сеется `0xA11CE001 ^ (rr * 0x9E37)` без члена layer, чтобы соседи оставались в фазе. Тихий оверлей 20 мс несёт `seed ^ (layer * 0x85EB) ^ 0x51`. Отклонение от EN-4 записано в design note.
+- `MicMix` запекается в буфер: close, HP overhead ~2 мс, 8 ранних отражений, экспоненциальный хвост. Send ∝ v^0.7. `EffectsChain` не тронут. Кап тарелок 2.5 с.
+- `AcousticTimbreTests` гоняет shipped `acousticHit` и `VoiceEngine`: центроид первых 30 мс у kick/snare/hat/ride/crash на v=1 ≥ 1.4× тихого; энергия малого 3–8 кГц на v=1 ≥ 3× v=0.2; sweep 0.05…1.0 шагом 0.05 не теряет peak и RMS; хвост комнаты длиннее сухого удара; 36 рецептов конечны; повтор бит-в-бит.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_06-07-26-+0200: totalTestCount 269, device passedTests 277, failed 0, skipped 0. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`.
+Метрики: фабричных китов ещё нет, таблица pLUFS пустая. Пороги зелёного прогона: центроид v=1 / v=0.25 ≥ 1.4 (окно 30 мс, snare сравнивается с v=0.2), wires 3–8 кГц ≥ 3×, RMS хвоста комнаты после сухого удара > 0.002. Точные центроиды прогон не печатает.
+Бюджеты: T-PERF-1…3 не измерялись. Слои 4, round-robin 2. Рендер одного тестового банка (4 слоя, RR 1) уложился в полный сьют (~114 с на все 269 тестов).
+Что слушать: модели закрывают пункты 10–18 как синтез, но фабричных китов ещё нет — слушать нечего из библиотеки. Пункты 1–9, 19–23, 26–27 ждут киты (AD-4), лейн (AD-5) и WAV (AD-6). Пункты 24–25 держатся golden и choke-тестами.
+Риски/долги: Real Rusty Multi не проверялся, сэмплы не добавлялись. Кап тарелки 2.5 с, не 4 с. Превью `samples()` и слой банка у v=0.8 не побитово равны. TQ-6 корреляция RR ещё не в тесте. Хост x86_64, не Apple Silicon. Киты, паттерны и T-KIT — AD-4.
