@@ -288,3 +288,18 @@ EQ (low, mid, high дБ): Punch +4 −2 +2; Bright 0 0 +5; Scoop +3 −5 +3; War
   - `KnobView.swift`: added `defaultValue` double-tap reset and Shift fine-drag (`0.001` vs `0.004`).
   - `MainLayoutView.swift`: added window-scoped `KeyShortcutMonitor` (`Space` play/stop, `F` fill-once, ignoring text fields, modifiers, repeats, and modal sheets/panels).
 - **Tests**: `DrumMashine_swistUITests` — 239 passed, 0 failed (`~/.drum_dd`), including `PerformanceAndUXImprovementTests` (4) and all guards (`FactoryBufferTests`, `VoiceEngineSegmentRenderTests`, `StepFlashSourceGuardTests`, `ThemeToastSourceGuardTests`, `SoundControlsTests`, `LayoutSnapshotTests`, `ChokeOffTests`).
+
+## AD-0 — design note, metrics, d2 golden  (ветка feat/acoustic-dynamics @ cdb17559b0a2ae720174ad844f83c7ae763903db)
+Статус: DONE
+Тесты: 244/0, лог qa/ad0/test-2026-11-18-ad0.log
+Golden: legacy 60 — без изменений; d2 — снят один раз (64 строки: 51 D-2 + 13 bundled) и с этого коммита не меняется
+Что сделано:
+- `docs/design/acoustic_dynamics.md` (82 строки): контракт AD-1…AD-6. Legacy `samples()` при `dynamics == nil` и строка `ptr[i] * velocity` не меняются. `Dynamics.curve` не входит в `synthesisHash`. Новые звуки — пресеты `ac_*`. Слои по умолчанию 4, round-robin 2. `FactoryStyle.percussion` — единственный новый case.
+- `DrumMashine_swistUITests/Support/AudioMetrics.swift`: peak, peak dB, RMS, spectral centroid, attack, T60, pseudo-LUFS, SHA-256, офлайн-рендер грува, запись 16-bit WAV без AVAudioFile.
+- `DrumMashine_swistUITests/AudioMetricsTests.swift`: синус 0.5 → −6.0206 dB (±0.01), центроид 1 кГц в пределах 5 %, шум конечный, рендер кита 808 конечный.
+- `FactoryBufferTests.d2AndBundledBuffersMatchBaseline` сравнивает `FactoryPresets.additional()` + `AcousticKit.presets()` с `Fixtures/factory_buffers_d2_48k.txt`. Кандидат пишется во временный каталог, фикстура из теста не перезаписывается.
+- Хост прогона: Mac mini, macOS 15.7.4, архитектура тестов x86_64. `xcresult`: 244 прогона, 236 уникальных имён, 0 failed, 0 skipped. В том числе `legacyFactoryBuffersMatchTheD0Hashes` и `d2AndBundledBuffersMatchBaseline`.
+Метрики: новых звуков нет. Проверка метрик: синус peak 0.5 = −6.02 dB; центроид 1 кГц в допуске 5 %.
+Бюджеты: не измерялись (слоёв ещё нет)
+Что слушать: нечего — AD-0 не меняет звук
+Риски/долги: AD-1…AD-6 ещё не начаты. Хост x86_64, порог 2.5 с в Debug для Apple Silicon придётся замерить отдельно. Real Rusty Multi не проверялся.
