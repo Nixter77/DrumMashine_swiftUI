@@ -71,7 +71,14 @@ nonisolated enum AcousticKit {
 extension SoundLibraryManager {
     /// Library tab contents: one voice, optionally one style (nil = all styles).
     func presets(for voice: SoundPreset.VoiceKind, style: FactoryStyle?) -> [SoundPreset] {
-        availableSounds.filter { $0.resolvedVoice == voice && (style == nil || $0.style == style) }
+        availableSounds.filter { preset in
+            guard preset.resolvedVoice == voice else { return false }
+            guard let style else { return true }
+            if style == .acoustic {
+                return preset.style == .acoustic || preset.style == .percussion
+            }
+            return preset.style == style
+        }
     }
 
     /// Pad sound menu: synth, bundled acoustic samples, and the user's presets of the track's family.

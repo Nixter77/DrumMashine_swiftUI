@@ -64,7 +64,7 @@ Normalization is per articulation: one scale so the loudest layer peaks at 0.5. 
 ## Acoustic models and room
 
 `AcousticSynthesizer` runs only when `dynamics != nil`, in place of the legacy generator. Recipes: membrane kick/tom, snare (center, rimshot, cross-stick, buzz tail), brush tap/swirl/slap, hat closed/open/pedal/half-open, ride bow/bell/edge, crash/splash/china, hand drums, shaker, tambourine, acoustic clap, snap, cowbell, agogo, timbale, wood, guiro, triangle, orchestral bass, timpani, concert snare, suspended cymbal. Tabla and realtime sympathetic buzz are out.
-Mic mix is summed into the buffer: close, a short HP overhead, and a seeded early-reflection plus exponential room tail. It does not touch `EffectsChain`. Room send scales with `v^0.7`.
+Mic mix is summed into the buffer: close, a short HP overhead, and a seeded early-reflection plus exponential room tail. It does not touch `EffectsChain`. Room send scales with `v^0.7`. The tail then passes a 20 Hz one-pole highpass: subtracting the mean left a DC pedestal that peak-normalize lifted into the last 5 %.
 Choke stays the track's choke group. Articulation does not change it, so closed and pedal still choke open and half-open.
 
 ## Kits, patterns, lane

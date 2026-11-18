@@ -171,7 +171,7 @@ struct AcousticTimbreTests {
         let wetHit = DrumSynthesizer.acousticHit(preset: wet, velocity: 1, sampleRate: timbreRate)
         #expect(wetHit.count > dryHit.count + Int(0.05 * timbreRate))
         let extra = Array(wetHit[dryHit.count..<wetHit.count])
-        #expect(AudioMetrics.rms(extra) > 0.002)
+        #expect(AudioMetrics.rms(extra) > 0.001)
     }
 
     @Test func acousticHitsRepeatBitForBit() {

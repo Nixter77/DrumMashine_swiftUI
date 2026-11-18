@@ -191,7 +191,7 @@ struct SoundLibraryView: View {
             }
             LibraryTabButton(
                 title: "KITS",
-                count: FactoryKits.all().count + KitStore.shared.kits.count,
+                count: FactoryKits.listed().count + KitStore.shared.kits.count,
                 isSelected: page == .kits,
                 color: AppTheme.accentSecondary
             ) {
@@ -199,7 +199,7 @@ struct SoundLibraryView: View {
             }
             LibraryTabButton(
                 title: "PATTERNS",
-                count: FactoryPatterns.all().count,
+                count: FactoryPatterns.listed().count,
                 isSelected: page == .patterns,
                 color: AppTheme.accent,
                 identifier: "library.page.patterns"
@@ -323,7 +323,7 @@ struct SoundLibraryView: View {
     }
 
     private var kitList: some View {
-        let factory = FactoryKits.all()
+        let factory = FactoryKits.listed()
         let saved = KitStore.shared.kits
         return ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 6) {
@@ -343,26 +343,46 @@ struct SoundLibraryView: View {
     }
 
     private func kitButton(_ kit: DrumKit) -> some View {
-        Button {
-            sequencer.loadKit(kit, undoManager: undoManager)
-        } label: {
-            HStack {
-                Text(kit.name)
-                    .font(.system(.caption, design: .monospaced).weight(.semibold))
-                    .foregroundColor(AppTheme.textPrimary)
-                Spacer()
-                Text("\(kit.sounds.count)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(AppTheme.textTertiary)
+        HStack(spacing: 6) {
+            Button {
+                sequencer.loadKit(kit, undoManager: undoManager)
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text(kit.name)
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundColor(AppTheme.textPrimary)
+                        Spacer()
+                        Text("\(kit.sounds.count)")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(AppTheme.textTertiary)
+                    }
+                    if let character = kit.character, !character.isEmpty {
+                        Text(character)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(AppTheme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(AppTheme.surfaceElevated.opacity(0.6))
+                )
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(AppTheme.surfaceElevated.opacity(0.6))
-            )
+            .buttonStyle(.plain)
+            if kit.character != nil {
+                Button("Слушать кит") {
+                    AudioEngineManager.shared.previewKit(kit)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(AppTheme.accent)
+                .accessibilityIdentifier("library.kit.listen.\(kit.name)")
+            }
         }
-        .buttonStyle(.plain)
     }
     
     // MARK: - Assignment Footer
@@ -470,7 +490,7 @@ struct SoundLibraryView: View {
 
     private var patternSections: [(genre: String, specs: [FactoryPatternSpec])] {
         var sections: [(genre: String, specs: [FactoryPatternSpec])] = []
-        for spec in FactoryPatterns.all() where patternMatches(spec) {
+        for spec in FactoryPatterns.listed() where patternMatches(spec) {
             if let last = sections.indices.last, sections[last].genre == spec.genre {
                 sections[last].specs.append(spec)
             } else {
@@ -598,6 +618,9 @@ struct SoundLibraryView: View {
 
     private func styleMatches(_ preset: SoundPreset) -> Bool {
         guard let styleFilter else { return true }
+        if styleFilter == .acoustic {
+            return preset.style == .acoustic || preset.style == .percussion
+        }
         return preset.style == styleFilter
     }
 

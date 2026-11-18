@@ -378,7 +378,7 @@ nonisolated enum AcousticSynthesizer {
         switch recipe {
         case .guiro: seconds = min(0.8, max(0.12, Double(preset.decay) * (0.6 + velocity)))
         case .clap: seconds = min(0.45, max(0.12, Double(preset.decay)))
-        case .snap: seconds = 0.08
+        case .snap: seconds = min(0.22, max(0.045, Double(preset.decay)))
         case .tambourine: seconds = min(0.7, max(0.1, Double(preset.decay) * 2))
         default: seconds = min(0.4, max(0.08, Double(preset.decay)))
         }
@@ -414,7 +414,10 @@ nonisolated enum AcousticSynthesizer {
                     buffer[at + index] += Float(rng.next() * env) * 0.6
                 }
             }
-            bandpass(&buffer, lowHz: recipe == .snap ? 2_000 : 800, highHz: recipe == .snap ? 4_500 : 6_000, sampleRate: sampleRate)
+            let shift = pow(2, Double(preset.pitch) / 12)
+            let low = (recipe == .snap ? 2_000.0 : 800.0) * shift
+            let high = (recipe == .snap ? 4_500.0 : 6_000.0) * shift
+            bandpass(&buffer, lowHz: low, highHz: max(low + 400, high), sampleRate: sampleRate)
         case .guiro:
             let rateHz = 25 + 35 * velocity
             let period = max(1, Int(sampleRate / rateHz))

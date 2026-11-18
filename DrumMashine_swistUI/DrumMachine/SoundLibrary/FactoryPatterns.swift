@@ -18,11 +18,13 @@ nonisolated struct FactoryPatternSpec: Identifiable, Equatable, Sendable {
 /// Forty factory rhythms. `makePattern` copies the kit, then applies overrides.
 enum FactoryPatterns {
     nonisolated static func all() -> [FactoryPatternSpec] { specs }
+    nonisolated static func acoustic() -> [FactoryPatternSpec] { acousticSpecs }
+    nonisolated static func listed() -> [FactoryPatternSpec] { specs + acousticSpecs }
 
     @MainActor
     static func makePattern(_ spec: FactoryPatternSpec) -> DrumPattern {
         let library = SoundLibraryManager.shared.availableSounds
-        let kit = FactoryKits.all().first {
+        let kit = FactoryKits.listed().first {
             $0.id == SoundLibraryManager.factoryID(filename: spec.kitID)
         }
         let sounds: [SoundPreset] = (0..<8).map { index in
@@ -45,11 +47,13 @@ enum FactoryPatterns {
             return track
         }
         for (index, row) in spec.rows where tracks.indices.contains(index) {
-            for (stepIndex, symbol) in row.enumerated() where tracks[index].steps.indices.contains(stepIndex) {
-                let hit = hit(for: symbol)
+            for (stepIndex, hit) in PatternNotation.hits(in: row).enumerated()
+                where tracks[index].steps.indices.contains(stepIndex) {
                 tracks[index].steps[stepIndex].isActive = hit.active
                 tracks[index].steps[stepIndex].velocity = hit.velocity
                 tracks[index].steps[stepIndex].probability = 1
+                if hit.accent { tracks[index].steps[stepIndex].accent = true }
+                if hit.articulation != 0 { tracks[index].steps[stepIndex].articulation = hit.articulation }
             }
         }
         var pattern = DrumPattern(
@@ -89,16 +93,7 @@ enum FactoryPatterns {
     @MainActor
     static func kitName(for spec: FactoryPatternSpec) -> String {
         let id = SoundLibraryManager.factoryID(filename: spec.kitID)
-        return FactoryKits.all().first { $0.id == id }?.name ?? spec.kitID
-    }
-
-    private nonisolated static func hit(for symbol: Character) -> (active: Bool, velocity: Float) {
-        switch symbol {
-        case "X": return (true, 1)
-        case "x": return (true, 0.75)
-        case "g": return (true, 0.4)
-        default: return (false, 0)
-        }
+        return FactoryKits.listed().first { $0.id == id }?.name ?? spec.kitID
     }
 
     private nonisolated static let specs: [FactoryPatternSpec] = [
@@ -351,4 +346,99 @@ enum FactoryPatterns {
             rows: rows
         )
     }
+
+    /// One demo pattern per new kit. Rows are space-separated tokens.
+    private nonisolated static let acousticSpecs: [FactoryPatternSpec] = [
+        spec("ac_studio_dry", "Studio Pocket", "Acoustic", 100, 8, "kit.ac.studio-dry", [:], [
+            0: "X - - - X - - - X - - - X - - -",
+            1: "- - - - X - - g - - - - A - - g",
+            2: "x x x x x x x x x x x x x x x x",
+            3: "- - - - X - - - - - - - X - - -",
+            6: "X - - - - - - - - - - - - - - -",
+            7: "x - x - x - x - x - x - x - x -"
+        ]),
+        spec("ac_jazz_club", "Jazz Swing", "Acoustic", 132, 58, "kit.ac.jazz-club-60s", [:], [
+            0: "X - - - - - - - X - - - - - x -",
+            1: "- g - g - - X - - g - g A - g -",
+            2: "x - x - x - xp - x - x - x - xp -",
+            4: "- - - - - - - - - - X1 - - X2 - -",
+            5: "x - xb - x - xb - x - xb - x - xb -",
+            6: "- - - - - - - - - - - - - - - X"
+        ]),
+        spec("ac_brushes", "Brush Ballad", "Acoustic", 72, 18, "kit.ac.brushes-ballad", [:], [
+            0: "X - - - - - X - - - - - X - - -",
+            1: "X1 - - g X1 - - g X1 - - g X1 - g -",
+            2: "x - xp - x - xp - x - xp - x - xp -",
+            5: "x - x - x - xb - x - x - x - xb -",
+            7: "x x x x x x x x x x x x x x x x"
+        ]),
+        spec("ac_funk_tight", "Funk Ghosts", "Acoustic", 104, 52, "kit.ac.funk-tight-70s", [:], [
+            0: "X - - X - - X - X - - x - - X -",
+            1: "- - - - X - g - - - g - Ar - - g",
+            2: "x x x x x x x xo x x x x x x x xo",
+            3: "- - - - X - - - - - - - x - - -",
+            7: "- - x - - - x - - - X - - - x -"
+        ]),
+        spec("ac_rock_room", "Rock Open Hat", "Acoustic", 118, 0, "kit.ac.rock-big-room", [:], [
+            0: "X - - - X - - - X - - X - - X -",
+            1: "- - - - X - - - - - - - A - - -",
+            2: "x x x xo x x x xo x x x xo x x x xo",
+            4: "- - - - - - - - - - X1 X2 X3 - - -",
+            6: "X - - - - - - - X - - - - - - -"
+        ]),
+        spec("ac_soul", "Soul Backbeat", "Acoustic", 92, 20, "kit.ac.vintage-60s-soul", [:], [
+            0: "X - - - - - X - - - X - - - x -",
+            1: "- - - - A - - g - - - - X - - g",
+            2: "x - x - x - x - x - x - x - x -",
+            3: "- - - - X - - - - - - - X - - -",
+            7: "x x - x x x - x x x - x x x - x"
+        ]),
+        spec("ac_dead", "Dead Pocket", "Acoustic", 88, 12, "kit.ac.vintage-70s-dead", [:], [
+            0: "X - - - X - - - X - - - x - - -",
+            1: "- - - - X - - - - - - - X - g -",
+            2: "x x x x x x x x x x x x x x x x",
+            5: "- - x - - - x - - - xb - - - x -"
+        ]),
+        spec("ac_fusion", "Fusion Break", "Acoustic", 126, 10, "kit.ac.fusion-bright", [:], [
+            0: "X - - X - - x - X - X - - - x -",
+            1: "- - - - X - g - - g - - Ar - g -",
+            2: "x x x x x x x xo x x x x x x x xh",
+            4: "- - X1 - X2 - X3 - - - X1 X2 - X3 - -",
+            5: "- - - - - - xb - - - - - - - xb -",
+            6: "- - - - - - - - - - - - - - X -"
+        ]),
+        spec("ac_hiphop", "Boom Bap Break", "Acoustic", 90, 54, "kit.ac.hiphop-breaks", [:], [
+            0: "X - - - - x - - X - - x - - - -",
+            1: "- - - - X - g - - - - - A - g -",
+            2: "x - x - x - x - x - x - x - x -",
+            3: "- - - - X - - - - - - - x - - -",
+            6: "- - - - - - - - - - - - X - - -"
+        ]),
+        spec("ac_latin", "Tumbao", "Acoustic", 108, 0, "kit.ac.latin-percussion", [:], [
+            0: "X - - - X - - x - - X - - - x -",
+            1: "- - X1 - - - X1 - - - X1 - - - X -",
+            2: "x x x x x x x x x x x x x x x x",
+            3: "- - - - X - - - - - - - X - - -",
+            4: "X - x - X2 - x - X - X3 - x - X -",
+            5: "- - x - - - X - - - x - - - Xb -",
+            7: "x - - x - - x - - x - - X2 - - -"
+        ]),
+        spec("ac_cajon", "Cajon Groove", "Acoustic", 96, 8, "kit.ac.cajon-unplugged", [:], [
+            0: "X - - x - - X - X - - x - - X -",
+            1: "- - X - - - x - - - X - - g x -",
+            2: "x x x x x x x x x x x x x x x x",
+            3: "- - - - X - - - - - - - - - - -",
+            4: "- - - - - - X3 - - - X1 - - - X2 -",
+            6: "- - - - - - - - X - - - - - - -"
+        ]),
+        spec("ac_orchestral", "Orchestral Crescendo", "Acoustic", 80, 0, "kit.ac.orchestral", [:], [
+            0: "- - - - X - - - - - - - A - - -",
+            1: "g g g g x x x x X X X X A - - -",
+            2: "x - - - x - - - x - - - X - - -",
+            4: "g - x1 - x2 - X3 - g - x1 - X2 - A3 -",
+            5: "x - - - x - - - x - - - X - - -",
+            6: "- - - - - - - - - - - - X - - -",
+            7: "x - - - x - - - X1 - - - X - - -"
+        ])
+    ]
 }

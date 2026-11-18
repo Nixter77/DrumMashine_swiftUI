@@ -360,7 +360,7 @@ struct TransportBarView: View {
 
     private var kitMenu: some View {
         Menu {
-            ForEach(FactoryKits.all()) { kit in
+            ForEach(FactoryKits.listed()) { kit in
                 Button(kit.name) {
                     sequencer.loadKit(kit, undoManager: undoManager)
                 }

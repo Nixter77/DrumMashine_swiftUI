@@ -939,6 +939,26 @@ class AudioEngineManager {
         swapVoiceSample(track: VoiceEngine.previewTrack, samples: samples)
         voiceEngine.trigger(track: VoiceEngine.previewTrack, velocity: 0.85, chokeGroup: -1, atSample: 0)
     }
+
+    /// Plays the kit's factory demo on the preview track. The user pattern is not changed.
+    func previewKit(_ kit: DrumKit) {
+        guard let spec = FactoryPatterns.acoustic().first(where: {
+            SoundLibraryManager.factoryID(filename: $0.kitID) == kit.id
+        }) else { return }
+        let pattern = FactoryPatterns.makePattern(spec)
+        previewLoadEpoch &+= 1
+        let epoch = previewLoadEpoch
+        let sampleRate = outputSampleRate
+        Task.detached(priority: .userInitiated) {
+            let buffer = KitPreview.mix(pattern: pattern, sampleRate: sampleRate)
+            await MainActor.run {
+                let manager = AudioEngineManager.shared
+                guard manager.previewLoadEpoch == epoch else { return }
+                guard abs(manager.outputSampleRate - sampleRate) < 0.5 else { return }
+                manager.playPreview(buffer)
+            }
+        }
+    }
     
     // MARK: - Load Sound Preset onto a Track
     /// Latest load request per track (main actor) and its mirror for the builders.

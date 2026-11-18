@@ -1397,6 +1397,9 @@ nonisolated enum DrumSynthesizer {
                 sampleRate: sampleRate
             )
         }
+        if let lofi = copy.synth?.lofi, lofiIsActive(lofi) {
+            applyLoFi(&raw, lofi)
+        }
         let seed = 0xA11C_E001 ^ (UInt64(rr) * 0x9E37) ^ (UInt64(layer) * 0x85EB)
         applyRRVariation(
             &raw,
@@ -1470,8 +1473,20 @@ nonisolated enum DrumSynthesizer {
         var sum = 0.0
         for sample in copy { sum += Double(sample) }
         let mean = Float(sum / Double(copy.count))
+        // A constant subtraction leaves a pedestal in the room tail, and the
+        // library's last-5% check hears it after peak normalize. A 20 Hz
+        // highpass removes that offset and lets the tail fall.
         if abs(mean) >= 0.000_1 {
-            for index in copy.indices { copy[index] -= mean }
+            let pole = exp(-2 * Double.pi * 20 / sampleRate)
+            var previousIn = 0.0
+            var previousOut = 0.0
+            for index in copy.indices {
+                let input = Double(copy[index])
+                let output = pole * (previousOut + input - previousIn)
+                previousIn = input
+                previousOut = output
+                copy[index] = Float(output)
+            }
         }
         let tenMilliseconds = Int(0.010 * sampleRate)
         let tenPercent = max(1, copy.count / 10)
