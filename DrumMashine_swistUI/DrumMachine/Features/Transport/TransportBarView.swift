@@ -277,14 +277,8 @@ struct TransportBarView: View {
             .accessibilityIdentifier("transport.sensitivity")
             .help("Чувствительность пэда и MIDI: soft, medium, hard")
 
-            TimelineView(.periodic(from: .now, by: 0.05)) { _ in
-                Circle()
-                    .fill(MIDIHub.shared.activity.isLit() ? AppTheme.accentSuccess : AppTheme.textTertiary.opacity(0.45))
-                    .frame(width: 8, height: 8)
-                    .accessibilityIdentifier("transport.midi")
-                    .accessibilityLabel("MIDI")
-            }
-            .help("MIDI: точка загорается на входящей ноте")
+            MIDIActivityDot(lamp: MIDIHub.lamp)
+                .help("MIDI: точка загорается на входящей ноте")
         }
     }
 
@@ -417,4 +411,17 @@ struct TransportBarView: View {
     TransportBarView(sequencer: SequencerEngine())
         .padding()
         .background(AppTheme.background)
+}
+
+/// Only this dot reads the lamp, so a note redraws 8 pt, not the transport.
+struct MIDIActivityDot: View {
+    let lamp: MIDIActivityLamp
+
+    var body: some View {
+        Circle()
+            .fill(lamp.isLit ? AppTheme.accentSuccess : AppTheme.textTertiary.opacity(0.45))
+            .frame(width: 8, height: 8)
+            .accessibilityIdentifier("transport.midi")
+            .accessibilityLabel("MIDI")
+    }
 }

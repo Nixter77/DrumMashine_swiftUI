@@ -301,6 +301,7 @@ class AudioEngineManager {
     }
 
     private func recoverFromConfigurationChange(epoch: Int) async {
+        latencyCache = nil
         let fresh = deviceChangeSuspend?() ?? (wasPlaying: false, step: 0)
         if fresh.wasPlaying {
             heldTransport = fresh
@@ -637,8 +638,26 @@ class AudioEngineManager {
         return frames > 0 ? frames : 512
     }
 
+    /// The playhead reads this every 16 ms. `presentationLatency` is a HAL query (1–2 % of the
+    /// main thread in Instruments during playback), so the value is reused for 500 ms and
+    /// re-read at once when the output rate changes or the configuration is rebuilt.
     var outputLatencyFrames: Int {
-        let frames = (engine.outputNode.presentationLatency * outputSampleRate).rounded()
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        if let cached = latencyCache,
+           cached.rate == outputSampleRate,
+           now &- cached.at < Self.latencyCacheNanoseconds {
+            return cached.frames
+        }
+        let frames = Self.latencyFrames(engine.outputNode.presentationLatency, sampleRate: outputSampleRate)
+        latencyCache = (frames, outputSampleRate, now)
+        return frames
+    }
+
+    static let latencyCacheNanoseconds: UInt64 = 500_000_000
+    @ObservationIgnored private var latencyCache: (frames: Int, rate: Double, at: UInt64)?
+
+    nonisolated static func latencyFrames(_ seconds: TimeInterval, sampleRate: Double) -> Int {
+        let frames = (seconds * sampleRate).rounded()
         guard frames.isFinite, frames > 0 else { return 0 }
         return Int(frames)
     }

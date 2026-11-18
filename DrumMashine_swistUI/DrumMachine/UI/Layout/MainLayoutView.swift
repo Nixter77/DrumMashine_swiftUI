@@ -115,6 +115,9 @@ struct MainLayoutView: View {
                     }
                 }
                 input.start()
+                if Self.autoPlayRequested() {
+                    startAutoPlayWhenReady()
+                }
             }
             DispatchQueue.main.async {
                 settleLibraryInspector()
@@ -190,6 +193,22 @@ struct MainLayoutView: View {
             ?? NSApp.windows.first?.frame.width
             ?? AppLayout.defaultWindow.width
         libraryOpen = width >= AppLayout.libraryOpensAtWidth
+    }
+
+    /// `-DMAutoPlay` starts the sequencer once the sounds are loaded, so Instruments (`xctrace record --attach`)
+    /// can profile playback without a click. Without the flag nothing changes.
+    static func autoPlayRequested(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> Bool {
+        arguments.contains("-DMAutoPlay")
+    }
+
+    private func startAutoPlayWhenReady() {
+        let sequencer = sequencerEngine
+        Task { @MainActor in
+            while !AudioEngineManager.shared.isReady {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            sequencer.play()
+        }
     }
 
     #if DEBUG

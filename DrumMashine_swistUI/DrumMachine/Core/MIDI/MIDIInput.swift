@@ -3,18 +3,79 @@ import Foundation
 import Synchronization
 
 /// Lit for 150 ms after a Note On. The MIDI thread writes it; the transport reads it.
+/// `mark()` reports whether the lamp must be woken, so the MIDI thread hops to the main actor
+/// at most once per lit period, and nothing polls while no notes arrive.
 nonisolated final class MIDIActivity: @unchecked Sendable {
-    private let nanos = Atomic<UInt64>(0)
+    static let litNanoseconds: UInt64 = 150_000_000
 
-    func mark() {
-        nanos.store(clock_gettime_nsec_np(CLOCK_UPTIME_RAW), ordering: .releasing)
+    private let nanos = Atomic<UInt64>(0)
+    /// True while a wake-up is pending or the lamp is lit. Cleared only by `rearm()`.
+    private let woken = Atomic<Bool>(false)
+
+    /// Returns true when the caller must wake the lamp (first note after it went dark).
+    @discardableResult
+    func mark(at now: UInt64 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) -> Bool {
+        nanos.store(now, ordering: .releasing)
+        return !woken.exchange(true, ordering: .acquiringAndReleasing)
     }
 
-    func isLit() -> Bool {
+    func isLit(at now: UInt64 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) -> Bool {
+        remainingLit(at: now) > 0
+    }
+
+    /// Nanoseconds until the lamp goes dark, 0 when it is already dark.
+    func remainingLit(at now: UInt64 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) -> UInt64 {
         let stamp = nanos.load(ordering: .acquiring)
-        guard stamp > 0 else { return false }
-        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        return now &- stamp < 150_000_000
+        guard stamp > 0 else { return 0 }
+        let elapsed = now &- stamp
+        return elapsed < Self.litNanoseconds ? Self.litNanoseconds - elapsed : 0
+    }
+
+    /// Lets the next `mark()` wake the lamp again.
+    func rearm() {
+        woken.store(false, ordering: .releasing)
+    }
+}
+
+/// Main-actor state for the transport's MIDI dot. Replaces a 20 Hz `TimelineView`, which kept the
+/// whole window's layout running at display rate while idle (~38 % CPU in Instruments).
+/// Wakes on the first note, sleeps until the lamp should go dark, then stops.
+@Observable
+final class MIDIActivityLamp {
+    private(set) var isLit = false
+    @ObservationIgnored private let activity: MIDIActivity
+    @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private let sleep: @Sendable (UInt64) async -> Void
+
+    init(
+        activity: MIDIActivity,
+        sleep: @escaping @Sendable (UInt64) async -> Void = { try? await Task.sleep(nanoseconds: $0) }
+    ) {
+        self.activity = activity
+        self.sleep = sleep
+    }
+
+    var isRunning: Bool { task != nil }
+
+    func wake() {
+        if !isLit { isLit = true }
+        guard task == nil else { return }
+        task = Task { @MainActor [weak self] in
+            while let self, !Task.isCancelled {
+                let remaining = self.activity.remainingLit()
+                if remaining > 0 {
+                    await self.sleep(remaining)
+                    continue
+                }
+                // Re-arm first, then re-check: a note that lands in between either shows up
+                // here or wakes a fresh task after this one ends.
+                self.activity.rearm()
+                if self.activity.remainingLit() > 0 { continue }
+                self.isLit = false
+                self.task = nil
+                return
+            }
+        }
     }
 }
 
@@ -123,7 +184,9 @@ nonisolated final class MIDIInput: @unchecked Sendable {
         }
         let engine = engineBox.withLock { $0 }
         guard !hits.isEmpty, let engine else { return }
-        activity.mark()
+        if activity.mark() {
+            Task { @MainActor in MIDIHub.lamp.wake() }
+        }
         for hit in hits {
             engine.trigger(
                 track: hit.track,
@@ -140,5 +203,6 @@ nonisolated final class MIDIInput: @unchecked Sendable {
 
 /// One shared client for the app. Unit tests do not call `start`.
 enum MIDIHub {
-    static let shared = MIDIInput()
+    nonisolated static let shared = MIDIInput()
+    static let lamp = MIDIActivityLamp(activity: shared.activity)
 }
