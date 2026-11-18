@@ -218,7 +218,7 @@ nonisolated enum AcousticKits {
             lofi: 0.22,
             kick: kick(52, damp: 0.5, beater: 0.35, decay: 0.3, pitch: 0.45, bright: 0.3),
             snare: snare(175, wires: 0.8, decay: 0.2, bright: 0.35, pitchSemis: -1),
-            hat: hat(decay: 0.07, scale: 0.88, bright: 0.3),
+            hat: hat(decay: 0.05, scale: 0.88, bright: 0.3),
             clap: clap(decay: 0.16, group: true),
             tom: tom(high: 130, mid: 95, floor: 68, decay: 0.34, damp: 0.4),
             ride: ride(decay: 0.45, scale: 0.75, rivets: 0.1, bright: 0.22),
@@ -257,7 +257,7 @@ nonisolated enum AcousticKits {
             clap: snapSlot(title: "Finger Snap", decay: 0.1, pitch: 8),
             tom: djembeToms(),
             ride: perc(title: "Tambourine Shake", recipe: .tambourine, f0: 2100, decay: 0.24, volume: 0.34, voice: .ride, category: .cymbals),
-            crash: crash(decay: 0.3, recipe: .splash, bright: 0.3, volume: 0.42),
+            crash: crash(decay: 0.16, recipe: .splash, bright: 0.72, volume: 0.42, pitch: 6, scale: 1.7),
             perc: clavesPerc()
         )
     }
@@ -326,7 +326,7 @@ nonisolated enum AcousticKits {
             curve: .db(range: range, shape: 1),
             layers: 4, roundRobin: 2,
             brightness: bright, transient: 0.55,
-            pitch: pitch, decay: decay, noise: noise, rrDetune: 15
+            pitch: pitch, decay: decay, noise: noise, rrDetune: 1
         )
     }
 
@@ -494,7 +494,7 @@ nonisolated enum AcousticKits {
         Slot(
             suffix: "tom", title: "Timpani", voice: .tom, category: .percussion,
             style: .acoustic, volume: 0.85, decay: 0.7,
-            dynamics: dyn(22, bright: 0.35, pitch: 1.6, decay: 0.45, noise: 0.08),
+            dynamics: dyn(22, bright: 0.35, pitch: 0.8, decay: 0.45, noise: 0.08),
             articulations: [
                 art("Mid", "", .timpani, f0: 110),
                 art("High", "1", .timpani, f0: 140),
@@ -693,6 +693,85 @@ nonisolated enum AcousticKits {
         )
     }
 
+    /// Measured on acousticHit at v=0.8. Moves each voice to the middle of its TQ-1 band.
+    private static let levelTrim: [String: Float] = [
+        "ac_studio-dry_kick": 1.533,
+        "ac_studio-dry_hat": 7.998,
+        "ac_studio-dry_clap": 4.797,
+        "ac_studio-dry_ride": 4.087,
+        "ac_studio-dry_crash": 2.844,
+        "ac_studio-dry_perc": 1.690,
+        "ac_jazz-club-60s_hat": 6.998,
+        "ac_jazz-club-60s_clap": 11.508,
+        "ac_jazz-club-60s_ride": 2.996,
+        "ac_jazz-club-60s_crash": 2.470,
+        "ac_jazz-club-60s_perc": 4.960,
+        "ac_brushes-ballad_kick": 0.480,
+        "ac_brushes-ballad_hat": 1.903,
+        "ac_brushes-ballad_clap": 3.365,
+        "ac_brushes-ballad_tom": 0.180,
+        "ac_funk-tight-70s_kick": 2.366,
+        "ac_funk-tight-70s_hat": 6.990,
+        "ac_funk-tight-70s_clap": 4.256,
+        "ac_funk-tight-70s_ride": 2.757,
+        "ac_funk-tight-70s_crash": 2.014,
+        "ac_rock-big-room_kick": 1.822,
+        "ac_rock-big-room_hat": 5.093,
+        "ac_rock-big-room_clap": 3.013,
+        "ac_rock-big-room_tom": 0.435,
+        "ac_rock-big-room_ride": 2.265,
+        "ac_rock-big-room_crash": 1.866,
+        "ac_vintage-60s-soul_kick": 2.077,
+        "ac_vintage-60s-soul_hat": 5.598,
+        "ac_vintage-60s-soul_clap": 3.954,
+        "ac_vintage-60s-soul_ride": 3.102,
+        "ac_vintage-60s-soul_tom": 0.869,
+        "ac_vintage-60s-soul_crash": 2.007,
+        "ac_vintage-70s-dead_kick": 2.457,
+        "ac_vintage-70s-dead_hat": 5.358,
+        "ac_vintage-70s-dead_clap": 10.423,
+        "ac_vintage-70s-dead_ride": 2.782,
+        "ac_vintage-70s-dead_crash": 1.975,
+        "ac_vintage-70s-dead_perc": 4.345,
+        "ac_fusion-bright_hat": 5.963,
+        "ac_fusion-bright_clap": 3.350,
+        "ac_fusion-bright_ride": 2.450,
+        "ac_fusion-bright_crash": 1.758,
+        "ac_fusion-bright_perc": 1.616,
+        "ac_hiphop-breaks_kick": 1.897,
+        "ac_hiphop-breaks_hat": 4.977,
+        "ac_hiphop-breaks_clap": 3.225,
+        "ac_hiphop-breaks_ride": 3.011,
+        "ac_hiphop-breaks_crash": 1.860,
+        "ac_latin-percussion_hat": 2.972,
+        "ac_latin-percussion_clap": 2.914,
+        "ac_latin-percussion_crash": 1.190,
+        "ac_cajon-unplugged_kick": 0.327,
+        "ac_cajon-unplugged_clap": 1.746,
+        "ac_cajon-unplugged_tom": 0.242,
+        "ac_cajon-unplugged_ride": 0.404,
+        "ac_cajon-unplugged_crash": 0.661,
+        "ac_cajon-unplugged_perc": 0.271,
+        "ac_orchestral_kick": 2.294,
+        "ac_orchestral_hat": 6.223,
+        "ac_orchestral_clap": 7.754,
+        "ac_orchestral_crash": 1.180
+    ]
+
+    /// Whole-kit gain after `levelTrim` so the shared reference groove meets TQ-3.
+    /// Rock Big Room stays at 1, so its snare volume stays exactly 1.
+    /// Measured against rock's absolute pLUFS before the 1.15 s cap; re-check after.
+    private static let grooveGain: [String: Float] = [
+        "studio-dry": 0.955,
+        "vintage-60s-soul": 1.020,
+        "vintage-70s-dead": 1.226,
+        "fusion-bright": 1.451,
+        "hiphop-breaks": 0.828,
+        "latin-percussion": 1.682,
+        "cajon-unplugged": 6.194,
+        "brushes-ballad": 4.241
+    ]
+
     private static func make(_ definition: Definition, _ slot: Slot) -> SoundPreset {
         let filename = "ac_\(definition.slug)_\(slot.suffix)"
         var preset = SoundPreset(
@@ -704,7 +783,8 @@ nonisolated enum AcousticKits {
         )
         preset.voice = slot.voice
         preset.style = slot.style
-        preset.volume = min(1, slot.volume * definition.scale)
+        let trimmed = slot.volume * definition.scale * (levelTrim[filename] ?? 1) * (grooveGain[definition.slug] ?? 1)
+        preset.volume = trimmed
         preset.decay = slot.decay
         preset.pitch = slot.pitch
         preset.attack = 0

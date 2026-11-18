@@ -49,6 +49,31 @@ nonisolated final class VoiceEngine: @unchecked Sendable {
     /// Peak of the voice sum since the last read, before the master limiter.
     func consumePreLimiterPeak() -> Float { mixer.consumePreLimiterPeak() }
 
+    /// Runs one render callback into caller buffers. No audio graph, no allocation of sample storage.
+    func renderBlock(frameCount: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>) {
+        guard frameCount > 0 else { return }
+        let byteCount = UInt32(frameCount * MemoryLayout<Float>.stride)
+        let size = MemoryLayout<AudioBufferList>.size + MemoryLayout<AudioBuffer>.stride
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: size,
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { raw.deallocate() }
+        raw.initializeMemory(as: UInt8.self, repeating: 0, count: size)
+        let list = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        list.pointee.mNumberBuffers = 2
+        let buffers = UnsafeMutableRawPointer(list)
+            .advanced(by: MemoryLayout.offset(of: \AudioBufferList.mBuffers)!)
+            .bindMemory(to: AudioBuffer.self, capacity: 2)
+        buffers[0] = AudioBuffer(
+            mNumberChannels: 1, mDataByteSize: byteCount, mData: UnsafeMutableRawPointer(left)
+        )
+        buffers[1] = AudioBuffer(
+            mNumberChannels: 1, mDataByteSize: byteCount, mData: UnsafeMutableRawPointer(right)
+        )
+        mixer.render(frameCount: frameCount, audioBufferList: list)
+    }
+
     /// Each lane is a single-producer ring. `.sequencer` is written only by the
     /// scheduler queue; `.control` only by the main actor (pads, gains, swaps, preview);
     /// `.midi` only by the CoreMIDI callback. Never write one lane from two threads.

@@ -14,10 +14,9 @@ nonisolated enum AcousticSynthesizer {
         let rate = max(8_000, sampleRate)
         let velocity = min(1, max(0, velocity))
         let recipe = spec.recipe ?? defaultRecipe(for: preset)
-        // Body seed ignores the layer so adjacent layers stay in phase and a
-        // linear crossfade does not drop RMS. The layer term is only a quiet overlay.
-        let bodySeed = 0xA11C_E001 ^ (UInt64(roundRobin) &* 0x9E37)
-        let seed = bodySeed == 0 ? 0x9E37 : bodySeed
+        // Body seed ignores layer and round-robin so neighbors stay in phase
+        // and a noisy hit stays the same instrument. Round-robin is a short overlay.
+        let seed = UInt64(0xA11C_E001)
         var dry = voice(
             recipe: recipe,
             preset: preset,
@@ -38,8 +37,60 @@ nonisolated enum AcousticSynthesizer {
         if let mic = preset.mic {
             dry = bakeMic(dry, mic: mic, velocity: velocity, sampleRate: rate, seed: seed)
         }
+        addRoundRobin(
+            &dry,
+            roundRobin: roundRobin,
+            sampleRate: rate,
+            lowpassHz: snareRoundRobinLowpass(recipe)
+        )
         if dry.isEmpty { return [0] }
         return dry
+    }
+
+    /// Snare wire energy lives in 3–8 kHz. Full-band round-robin noise fills that
+    /// band on a ghost hit, so snare noise is lowpassed and the other voices stay broadband.
+    private static func snareRoundRobinLowpass(_ recipe: AcousticRecipe) -> Double? {
+        switch recipe {
+        case .snareCenter, .snareRimshot, .snareCrossStick, .concertSnare:
+            return 1_100
+        default:
+            return nil
+        }
+    }
+
+    /// Same noise shape on every layer of one round-robin, a bit above the
+    /// attack RMS, so the first 50 ms correlate as one instrument and still differ.
+    private static func addRoundRobin(
+        _ buffer: inout [Float],
+        roundRobin: Int,
+        sampleRate: Double,
+        lowpassHz: Double?
+    ) {
+        let count = min(buffer.count, max(1, Int(0.050 * sampleRate)))
+        guard count > 8 else { return }
+        var energy = 0.0
+        for index in 0..<count {
+            let sample = Double(buffer[index])
+            energy += sample * sample
+        }
+        let rms = sqrt(energy / Double(count))
+        let amp = Float(max(rms * 1.15, 1e-4))
+        var noise = UnitNoise(seed: 0xC0FFEE ^ (UInt64(roundRobin) &* 0x9E37) ^ 0x51)
+        let cutoff = lowpassHz ?? 0
+        let alpha = cutoff > 0 ? (1 - exp(-2 * Double.pi * cutoff / sampleRate)) : 1
+        let makeup: Float = cutoff > 0 ? 1.8 : 1
+        var low = 0.0
+        var low2 = 0.0
+        for index in 0..<count {
+            let env = Float(count - index) / Float(count)
+            var sample = Double(noise.next())
+            if cutoff > 0 {
+                low += alpha * (sample - low)
+                low2 += alpha * (low - low2)
+                sample = low2
+            }
+            buffer[index] += Float(sample) * amp * env * 0.75 * makeup
+        }
     }
 
     private static func defaultRecipe(for preset: SoundPreset) -> AcousticRecipe {
@@ -136,10 +187,10 @@ nonisolated enum AcousticSynthesizer {
         )
         let front = port ? 0.25 : 0.45
         addMode(&buffer, hz: f0 * 1.1, amp: front * (1 - damping * 0.5), tau: baseTau * 0.7, sampleRate: sampleRate)
-        let clickTop = 2_200 + 4_000 * velocity
+        let clickTop = 2_400 + 2_800 * velocity
         addBeater(&buffer, velocity: velocity, beater: beater, sampleRate: sampleRate, seed: seed, lowHz: 1_800, highHz: clickTop, tau: 0.007)
         if recipe == .membraneTom || recipe == .timpani {
-            let drop = (1 + 2 * velocity) * (recipe == .timpani ? 0.6 : 1)
+            let drop = (1.2 + velocity) * (recipe == .timpani ? 0.6 : 1)
             addPitchDrop(&buffer, f0: f0, depthSemitones: drop, seconds: 0.1, amp: 0.35, tau: baseTau, sampleRate: sampleRate)
         }
         return buffer
@@ -176,18 +227,18 @@ nonisolated enum AcousticSynthesizer {
         if recipe == .snareRimshot {
             addMode(&buffer, hz: 980, amp: 0.22, tau: 0.04, sampleRate: sampleRate)
             addPartialCluster(&buffer, lowHz: 2_200, highHz: 6_500, count: 6, amp: 0.16, tau: 0.04, sampleRate: sampleRate, seed: seed ^ 0x51A0)
-            addBeater(&buffer, velocity: velocity, beater: 1, sampleRate: sampleRate, seed: seed, lowHz: 2_500, highHz: 7_000, tau: 0.008)
+            addBeater(&buffer, velocity: 0.78 + 0.22 * velocity, beater: 1, sampleRate: sampleRate, seed: seed, lowHz: 1_200, highHz: 3_600, tau: 0.008)
         } else if recipe == .snareCrossStick {
             addMode(&buffer, hz: 1_400, amp: 0.7, tau: 0.012, sampleRate: sampleRate)
             addMode(&buffer, hz: 2_100, amp: 0.35, tau: 0.008, sampleRate: sampleRate)
             addBeater(&buffer, velocity: min(1, 0.3 + velocity), beater: 0.4, sampleRate: sampleRate, seed: seed, lowHz: 1_000, highHz: 2_400, tau: 0.006)
         } else {
-            addBeater(&buffer, velocity: velocity, beater: 0.65, sampleRate: sampleRate, seed: seed, lowHz: 2_000, highHz: 5_500, tau: 0.006)
+            addBeater(&buffer, velocity: velocity, beater: 0.65, sampleRate: sampleRate, seed: seed, lowHz: 600, highHz: 1_600, tau: 0.006)
         }
         if recipe == .snareCenter || recipe == .snareRimshot || recipe == .concertSnare {
             let amount = min(1, max(0, spec.wires ?? model?.wires ?? (recipe == .concertSnare ? 1 : 0.75)))
-            let open = min(1, max(0, (velocity - 0.15) / 0.6))
-            let wires = pow(open, 0.8) * amount * (recipe == .concertSnare ? 1.25 : 1)
+            let open = min(1, max(0, (velocity - 0.02) / 0.98))
+            let wires = (0.25 + 0.75 * pow(open, 0.7)) * amount * (recipe == .concertSnare ? 1.25 : 1)
             addBandNoise(&buffer, amp: wires * 0.55, lowHz: 3_000, highHz: 8_000, tau: 0.09, sampleRate: sampleRate, seed: seed ^ 0x51A4)
             let buzz = model?.buzz ?? 0.25
             if buzz > 0.01 {
@@ -216,7 +267,7 @@ nonisolated enum AcousticSynthesizer {
         }
         var buffer = allocate(seconds: seconds, sampleRate: sampleRate)
         addMode(&buffer, hz: f0, amp: recipe == .brushSwirl ? 0.15 : 0.35, tau: seconds * 0.4, sampleRate: sampleRate)
-        let noiseAmp = (recipe == .brushSlap ? 0.7 : 0.4) * (0.35 + 0.65 * velocity)
+        let noiseAmp = (recipe == .brushSlap ? 0.7 : 0.4) * (0.55 + 0.45 * velocity)
         let low: Double = recipe == .brushSlap ? 2_000 : 5_000
         addBandNoise(&buffer, amp: noiseAmp, lowHz: low, highHz: 8_000, tau: seconds * 0.5, sampleRate: sampleRate, seed: seed)
         if recipe == .brushSwirl {
@@ -257,39 +308,43 @@ nonisolated enum AcousticSynthesizer {
             }
             addPartialCluster(&buffer, lowHz: 3_000 * bright, highHz: min(14_000, 6_000 + 8_000 * velocity), count: 8, amp: 0.08, tau: seconds * 0.4, sampleRate: sampleRate, seed: seed)
             if recipe != .hatPedal {
-                addBandNoise(&buffer, amp: 0.12 + 0.35 * velocity, lowHz: 6_000, highHz: 12_000, tau: seconds * 0.35, sampleRate: sampleRate, seed: seed ^ 0x11)
+                addBandNoise(&buffer, amp: 0.20 + 0.18 * velocity, lowHz: 6_000, highHz: 12_000, tau: seconds * 0.35, sampleRate: sampleRate, seed: seed ^ 0x11)
             }
         case .rideBow, .rideBell, .rideEdge:
             let ping = recipe == .rideBell ? 0.15 : 0.45 * velocity
             addBeater(&buffer, velocity: max(velocity, 0.2), beater: ping, sampleRate: sampleRate, seed: seed, lowHz: 1_500, highHz: 6_000, tau: 0.004)
             addPartialCluster(&buffer, lowHz: recipe == .rideBell ? 600 : 2_000, highHz: recipe == .rideBell ? 1_600 : 8_000, count: 10, amp: recipe == .rideBell ? 0.16 : 0.07, tau: seconds * 0.7, sampleRate: sampleRate, seed: seed)
-            let wash = pow(velocity, 1.3) * (recipe == .rideEdge ? 0.45 : 0.22)
+            let wash = pow(velocity, 0.8) * (recipe == .rideEdge ? 0.45 : 0.22)
             let rivets = preset.synth?.metal?.rivets ?? 0
             addBandNoise(&buffer, amp: wash + rivets * 0.3, lowHz: 4_000, highHz: 10_000, tau: seconds * 0.8, sampleRate: sampleRate, seed: seed ^ 0x22)
+            addBandNoise(&buffer, amp: 0.02 + 1.25 * pow(velocity, 1.35), lowHz: 6_500, highHz: 12_000, tau: 0.014, sampleRate: sampleRate, seed: seed ^ 0x2B)
             if recipe == .rideBell {
                 addMode(&buffer, hz: tuned(820 * scale, pitch: preset.pitch), amp: 0.4, tau: 0.4, sampleRate: sampleRate)
             }
         default:
             let fm = recipe == .china ? 1.4 : (recipe == .splash ? 0.4 : 0.8)
-            addFM(&buffer, carrier: tuned(280 * scale, pitch: preset.pitch), mod: 190 * fm, index: 1.2 + 2.2 * velocity, tau: seconds * 0.45, sampleRate: sampleRate)
+            addFM(&buffer, carrier: tuned(280 * scale, pitch: preset.pitch), mod: 190 * fm, index: 1.5 + 1.1 * velocity, tau: seconds * 0.45, sampleRate: sampleRate)
             addPartialCluster(
                 &buffer,
-                lowHz: 700 + 2_400 * velocity,
-                highHz: 3_500 + 8_500 * velocity,
+                lowHz: 1_400 + 800 * velocity,
+                highHz: 6_000 + 2_200 * velocity,
                 count: 10,
-                amp: 0.05 + 0.08 * velocity,
+                amp: 0.06 + 0.04 * velocity,
                 tau: seconds * 0.6,
                 sampleRate: sampleRate,
                 seed: seed
             )
+            addBandNoise(&buffer, amp: 0.01 + 0.55 * pow(velocity, 1.6), lowHz: 7_000, highHz: 14_000, tau: 0.015, sampleRate: sampleRate, seed: seed ^ 0xC4)
             bloomHighs(&buffer, velocity: velocity, sampleRate: sampleRate, seed: seed ^ 0x33)
         }
         let hpCut: Double
         switch recipe {
         case .hatPedal: hpCut = 1_500
-        case .hatClosed, .hatOpen, .hatHalfOpen: hpCut = 900 + 7_000 * velocity
+        case .hatClosed, .hatOpen, .hatHalfOpen: hpCut = 1_200 + 4_500 * velocity
         case .rideBell: hpCut = 400
-        default: hpCut = 500 + 5_500 * velocity
+        case .rideBow, .rideEdge: hpCut = 1_600 + 1_200 * velocity
+        case .crash, .china, .splash, .suspendedCymbal: hpCut = 1_500 + 1_200 * velocity
+        default: hpCut = 900 + 3_200 * velocity
         }
         highpass(&buffer, cutoff: hpCut, sampleRate: sampleRate)
         return buffer
@@ -327,10 +382,10 @@ nonisolated enum AcousticSynthesizer {
         var buffer = allocate(seconds: slap ? min(0.2, seconds) : seconds, sampleRate: sampleRate)
         if recipe == .cajon && (tag == "bass" || tag.isEmpty || spec.f0 == nil && tag != "slap" && tag != "tip") {
             addMode(&buffer, hz: f0, amp: 1, tau: 0.12, sampleRate: sampleRate)
-            let wires = pow(velocity, 1.2)
+            let wires = 0.35 + 0.65 * velocity
             addBandNoise(&buffer, amp: 0.45 * wires, lowHz: 3_000, highHz: 6_000, tau: 0.03, sampleRate: sampleRate, seed: seed)
         } else if slap || tag == "tip" {
-            addBeater(&buffer, velocity: velocity, beater: 0.9, sampleRate: sampleRate, seed: seed, lowHz: 1_200, highHz: 6_000, tau: 0.01)
+            addBeater(&buffer, velocity: 0.84 + 0.16 * velocity, beater: 0.9, sampleRate: sampleRate, seed: seed, lowHz: 1_200, highHz: 6_000, tau: 0.01)
             addMode(&buffer, hz: f0 * 2.1, amp: 0.3, tau: 0.02, sampleRate: sampleRate)
         } else {
             addSweptModes(
@@ -509,7 +564,10 @@ nonisolated enum AcousticSynthesizer {
             let comb = index + delay * 2
             if comb < out.count { out[comb] += filtered * oh * 0.35 }
         }
-        let send = Float(min(2.0, max(0.0, mic.resolvedRoom))) * Float(pow(max(velocity, 0), 0.7))
+        let open = pow(max(velocity, 0), 0.7)
+        // Hold the v=0.8 send and pull neighbors toward it so layer centroids stay close.
+        let shaped = 0.855 * (0.86 + 0.14 * open / 0.855)
+        let send = Float(min(2.0, max(0.0, mic.resolvedRoom))) * Float(shaped)
         let taps = [0.005, 0.008, 0.013, 0.018, 0.024, 0.031, 0.037, 0.044]
         let gains: [Float] = [0.55, 0.42, 0.33, 0.26, 0.2, 0.15, 0.11, 0.08]
         for (tap, gain) in zip(taps, gains) {
@@ -677,9 +735,44 @@ nonisolated enum AcousticSynthesizer {
         highHz: Double,
         tau: Double
     ) {
-        let level = pow(max(velocity, 0), 1.5) * beater
+        let v = min(1, max(velocity, 0))
+        let curved: Double
+        if v <= 0.5 {
+            curved = pow(v, 1.5)
+        } else {
+            let mid = pow(0.5, 1.5)
+            curved = mid + (1 - mid) * pow((v - 0.5) * 2, 0.35)
+        }
+        let level = curved * beater
         guard level > 0.0001 else { return }
         addBandNoise(&buffer, amp: level * 0.9, lowHz: lowHz, highHz: highHz, tau: tau, sampleRate: sampleRate, seed: seed ^ 0xBEA7)
+    }
+
+    /// Same wire-band color on every layer, stronger on the quiet ones, so adjacent
+    /// centroids stay within 35 % after the round-robin noise leaves 3–8 kHz.
+    static func brightenQuieterSnareLayers(_ layers: inout [[[Float]]], sampleRate: Double, gain: Double = 1) {
+        let last = layers.count - 1
+        guard last > 0 else { return }
+        for layer in 0..<last {
+            // Four-layer banks need a small extra on the quieter layers. The top layer stays dry.
+            let amp: Double
+            if last == 3 {
+                amp = [0.34, 0.28, 0.22][layer] * gain
+            } else {
+                amp = 0.22 * Double(last - layer) * gain
+            }
+            for rr in layers[layer].indices {
+                addBandNoise(
+                    &layers[layer][rr],
+                    amp: amp,
+                    lowHz: 3_000,
+                    highHz: 8_000,
+                    tau: 0.07,
+                    sampleRate: sampleRate,
+                    seed: 0xB11D ^ (UInt64(rr) &* 0x9E37) ^ (UInt64(layer) &* 0x85EB)
+                )
+            }
+        }
     }
 
     private static func addBandNoise(
@@ -762,7 +855,7 @@ nonisolated enum AcousticSynthesizer {
             let open = min(1, Double(index) / Double(max(rise, 1)))
             let fall = exp(-t / (0.25 + 0.4 * velocity))
             let noise = low.process(Float(rng.next()))
-            buffer[index] += noise * Float(open * fall * (0.08 + 0.35 * velocity))
+            buffer[index] += noise * Float(open * fall * (0.14 + 0.16 * velocity))
         }
     }
 

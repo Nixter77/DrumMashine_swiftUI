@@ -60,7 +60,8 @@ struct AcousticCatalogTests {
         expectMic(kits["Cajon Unplugged"], 0.8, 0.4, 0.4, .small)
         expectMic(kits["Orchestral"], 0.4, 0.8, 0.9, .hall)
         let brushes = kits["Brushes Ballad"]
-        #expect(brushes?.sounds[1].volume == Float(0.7))
+        let brushesSnare = brushes?.sounds[1].volume ?? -1
+        #expect(abs(brushesSnare - (Float(0.7) * Float(4.241))) < 0.001)
         let rock = kits["Rock Big Room"]
         #expect(rock?.sounds[1].volume == 1)
     }
