@@ -1307,7 +1307,10 @@ nonisolated enum DrumSynthesizer {
                 let gain = preset.filename.contains("rock-big-room") ? 1.55 : 1
                 AcousticSynthesizer.brightenQuieterSnareLayers(&layers, sampleRate: sampleRate, gain: gain)
             }
-            arts.append(normalizeArticulation(layers))
+            arts.append(normalizeArticulation(
+                layers,
+                hierarchy: AcousticKits.bankPlaybackGain(filename: preset.filename)
+            ))
         }
         let curve = dynamics.resolvedCurve
         return LayerBank.make(
@@ -1545,7 +1548,9 @@ nonisolated enum DrumSynthesizer {
     }
 
     /// One scale for the articulation, then a lift so peak and RMS do not fall with velocity.
-    private static func normalizeArticulation(_ layers: [[[Float]]]) -> [[[Float]]] {
+    /// `hierarchy` is applied after that shared peak cap and is never above 1, so a quieter
+    /// voice stays under the cap instead of being lifted back to it.
+    private static func normalizeArticulation(_ layers: [[[Float]]], hierarchy: Float = 1) -> [[[Float]]] {
         func peak(_ buffer: [Float]) -> Float {
             var value: Float = 0
             guard !buffer.isEmpty else { return 0 }
@@ -1611,6 +1616,12 @@ nonisolated enum DrumSynthesizer {
             let down = dynamicsBufferPeak / over
             for index in result.indices {
                 result[index] = result[index].map { scaled($0, by: down) }
+            }
+        }
+        let trimmed = min(1, max(0, hierarchy))
+        if trimmed < 0.999 {
+            for index in result.indices {
+                result[index] = result[index].map { scaled($0, by: trimmed) }
             }
         }
         return result

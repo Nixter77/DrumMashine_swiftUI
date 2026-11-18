@@ -38,6 +38,131 @@ nonisolated enum AcousticKits {
 
     static func kitID(slug: String) -> String { "kit.ac.\(slug)" }
 
+    /// Linear scale applied after each articulation is peak-capped.
+    /// 1 keeps the cap. A smaller value is how live playback keeps the TQ-1 gaps
+    /// that `levelTrim` only achieves on `acousticHit`.
+    static func bankPlaybackGain(filename: String) -> Float {
+        bankPlayback[filename] ?? 1
+    }
+
+    /// Measured on VoiceEngine at 48 kHz: post-cap gain so v=0.8 pseudo-LUFS
+    /// lands on the TQ-1 midpoint. Missing names stay at 1. Never above 1.
+    private static let bankPlayback: [String: Float] = [
+        "ac_brushes-ballad_crash": 0.386,
+        "ac_brushes-ballad_hat": 0.651,
+        "ac_brushes-ballad_kick": 0.727,
+        "ac_brushes-ballad_perc": 0.305,
+        "ac_brushes-ballad_ride": 0.266,
+        "ac_brushes-ballad_snare": 0.902,
+        "ac_brushes-ballad_tom": 0.444,
+        "ac_cajon-unplugged_clap": 0.591,
+        "ac_cajon-unplugged_crash": 0.328,
+        "ac_cajon-unplugged_hat": 0.153,
+        "ac_cajon-unplugged_kick": 0.484,
+        "ac_cajon-unplugged_perc": 0.244,
+        "ac_cajon-unplugged_ride": 0.399,
+        "ac_cajon-unplugged_tom": 0.433,
+        "ac_funk-tight-70s_clap": 0.668,
+        "ac_funk-tight-70s_crash": 0.282,
+        "ac_funk-tight-70s_hat": 0.693,
+        "ac_funk-tight-70s_kick": 0.528,
+        "ac_funk-tight-70s_perc": 0.361,
+        "ac_funk-tight-70s_ride": 0.237,
+        "ac_funk-tight-70s_tom": 0.506,
+        "ac_fusion-bright_clap": 0.528,
+        "ac_fusion-bright_crash": 0.237,
+        "ac_fusion-bright_hat": 0.601,
+        "ac_fusion-bright_kick": 0.486,
+        "ac_fusion-bright_perc": 0.352,
+        "ac_fusion-bright_ride": 0.158,
+        "ac_fusion-bright_tom": 0.359,
+        "ac_hiphop-breaks_clap": 0.905,
+        "ac_hiphop-breaks_crash": 0.474,
+        "ac_hiphop-breaks_kick": 0.858,
+        "ac_hiphop-breaks_perc": 0.228,
+        "ac_hiphop-breaks_ride": 0.282,
+        "ac_hiphop-breaks_snare": 0.784,
+        "ac_hiphop-breaks_tom": 0.474,
+        "ac_jazz-club-60s_crash": 0.296,
+        "ac_jazz-club-60s_hat": 0.526,
+        "ac_jazz-club-60s_kick": 0.590,
+        "ac_jazz-club-60s_perc": 0.186,
+        "ac_jazz-club-60s_ride": 0.257,
+        "ac_jazz-club-60s_snare": 0.665,
+        "ac_jazz-club-60s_tom": 0.354,
+        "ac_latin-percussion_clap": 0.789,
+        "ac_latin-percussion_crash": 0.419,
+        "ac_latin-percussion_hat": 0.228,
+        "ac_latin-percussion_kick": 0.783,
+        "ac_latin-percussion_perc": 0.565,
+        "ac_latin-percussion_ride": 0.540,
+        "ac_latin-percussion_tom": 0.710,
+        "ac_orchestral_clap": 0.885,
+        "ac_orchestral_crash": 0.404,
+        "ac_orchestral_hat": 0.864,
+        "ac_orchestral_kick": 0.903,
+        "ac_orchestral_perc": 0.202,
+        "ac_orchestral_ride": 0.261,
+        "ac_orchestral_tom": 0.610,
+        "ac_rock-big-room_clap": 0.565,
+        "ac_rock-big-room_crash": 0.495,
+        "ac_rock-big-room_hat": 0.507,
+        "ac_rock-big-room_kick": 0.643,
+        "ac_rock-big-room_perc": 0.286,
+        "ac_rock-big-room_ride": 0.230,
+        "ac_rock-big-room_tom": 0.469,
+        "ac_studio-dry_clap": 0.786,
+        "ac_studio-dry_crash": 0.504,
+        "ac_studio-dry_hat": 0.843,
+        "ac_studio-dry_kick": 0.731,
+        "ac_studio-dry_perc": 0.426,
+        "ac_studio-dry_ride": 0.388,
+        "ac_studio-dry_tom": 0.530,
+        "ac_vintage-60s-soul_clap": 0.847,
+        "ac_vintage-60s-soul_crash": 0.519,
+        "ac_vintage-60s-soul_hat": 0.630,
+        "ac_vintage-60s-soul_kick": 0.888,
+        "ac_vintage-60s-soul_perc": 0.273,
+        "ac_vintage-60s-soul_ride": 0.354,
+        "ac_vintage-60s-soul_tom": 0.572,
+        "ac_vintage-70s-dead_clap": 0.986,
+        "ac_vintage-70s-dead_crash": 0.314,
+        "ac_vintage-70s-dead_hat": 0.622,
+        "ac_vintage-70s-dead_kick": 0.691,
+        "ac_vintage-70s-dead_perc": 0.237,
+        "ac_vintage-70s-dead_ride": 0.295,
+        "ac_vintage-70s-dead_tom": 0.550
+    ]
+
+    /// Replaces the slot curve where the played ghost sat outside its window.
+    /// Shape stays 1. Playback only: `acousticHit` does not read it.
+    private static let bankCurveRange: [String: Double] = [
+        "ac_brushes-ballad_crash": 20.06,
+        "ac_brushes-ballad_hat": 17.88,
+        "ac_cajon-unplugged_crash": 19.66,
+        "ac_cajon-unplugged_snare": 28.37,
+        "ac_funk-tight-70s_crash": 19.09,
+        "ac_funk-tight-70s_hat": 17.52,
+        "ac_funk-tight-70s_kick": 16.56,
+        "ac_fusion-bright_crash": 20.20,
+        "ac_fusion-bright_hat": 18.03,
+        "ac_hiphop-breaks_crash": 20.09,
+        "ac_hiphop-breaks_hat": 18.80,
+        "ac_hiphop-breaks_snare": 25.59,
+        "ac_jazz-club-60s_crash": 19.97,
+        "ac_jazz-club-60s_hat": 17.13,
+        "ac_jazz-club-60s_snare": 25.63,
+        "ac_latin-percussion_crash": 23.00,
+        "ac_orchestral_hat": 18.71,
+        "ac_rock-big-room_hat": 16.68,
+        "ac_rock-big-room_kick": 19.00,
+        "ac_studio-dry_hat": 17.84,
+        "ac_vintage-60s-soul_hat": 17.17,
+        "ac_vintage-60s-soul_snare": 23.28,
+        "ac_vintage-70s-dead_crash": 19.20,
+        "ac_vintage-70s-dead_hat": 18.04
+    ]
+
     // MARK: - Definitions
 
     private nonisolated struct Slot {
@@ -792,6 +917,10 @@ nonisolated enum AcousticKits {
         preset.release = 0.02
         preset.chokeGroup = slot.choke
         preset.dynamics = slot.dynamics
+        if var dynamics = preset.dynamics, let range = bankCurveRange[filename] {
+            dynamics.curve = .db(range: range, shape: 1)
+            preset.dynamics = dynamics
+        }
         preset.articulations = slot.articulations
         preset.mic = definition.mic
         var synth = slot.synth
