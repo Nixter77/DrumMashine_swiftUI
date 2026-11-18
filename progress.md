@@ -353,3 +353,19 @@ Golden: legacy 60 — без изменений; d2 — без изменени�
 Бюджеты: T-PERF-1…3 не измерялись. Слои 4, round-robin 2. Рендер одного тестового банка (4 слоя, RR 1) уложился в полный сьют (~114 с на все 269 тестов).
 Что слушать: модели закрывают пункты 10–18 как синтез, но фабричных китов ещё нет — слушать нечего из библиотеки. Пункты 1–9, 19–23, 26–27 ждут киты (AD-4), лейн (AD-5) и WAV (AD-6). Пункты 24–25 держатся golden и choke-тестами.
 Риски/долги: Real Rusty Multi не проверялся, сэмплы не добавлялись. Кап тарелки 2.5 с, не 4 с. Превью `samples()` и слой банка у v=0.8 не побитово равны. TQ-6 корреляция RR ещё не в тесте. Хост x86_64, не Apple Silicon. Киты, паттерны и T-KIT — AD-4.
+
+## AD-4 — twelve acoustic kits and pattern notation  (ветка feat/acoustic-dynamics @ 21a6f7a4ea4ed0895bb5f11272c0c9d7ed3823c6)
+Статус: DONE
+Тесты: 273/0, лог qa/ad4/test-2026-11-18-ad4.log
+Golden: legacy 60 — без изменений; d2 — без изменений
+Что сделано:
+- `AcousticKits` добавляет 12 китов и 96 пресетов `ac_<slug>_<voice>`. Имена: Studio Dry, Jazz Club 60s, Brushes Ballad, Funk Tight 70s, Rock Big Room, Vintage 60s Soul, Vintage 70s Dead, Fusion Bright, Hip-Hop Breaks, Latin Percussion, Cajon Unplugged, Orchestral. У каждого 8 слотов в порядке треков, `dynamics != nil`, id `factoryID("kit.ac.<slug>")`. `FactoryKits.all()` по-прежнему 5 китов; UI берёт `listed()`.
+- Latin Percussion целиком `.percussion`. Фильтр ACOUSTIC показывает `.acoustic` и `.percussion`. Строка кита показывает `character`. «Слушать кит» зовёт `previewKit`: демо из фабричного паттерна идёт на превью-трек и не пишет пользовательский паттерн.
+- `FactoryPatterns.all()` остаётся 40. Новые 12 грувов в `acoustic()`. Токены: `A` — accent и velocity 1, суффиксы `r/s/o/p/h/b/1/2/3`. Старая строка без пробелов `X---x--g--------` не меняет шаги. `notesOnly` копирует accent и articulation только если у фабричного шага они не nil.
+- Хвост комнаты проходит one-pole highpass 20 Гц вместо вычитания среднего: пьедестал DC после `finalize` поднимал последние 5 % кахон-кика до 0.001592. Snap берёт длину из `decay` и сдвигает полосу по `pitch`, иначе пик-нормализация превью склеивала разные щелчки. Шейкеры в слоте хэта (Latin, Cajon) получили `chokeGroup` 1, как остальные `.hihat`.
+- `AcousticCatalogTests` проверяет имена, слоты, микшеры KT-1, нотацию и то, что `KitPreview.mix` не трогает `SequencerEngine`. Счётчики библиотеки: 111 + pieces + 96.
+- Хост: Mac mini, macOS 15.7.4, x86_64. `xcresult` Test-DrumMashine_swistUI-2026.11.18_06-47-22-+0200: totalTestCount 273, device passedTests 281, failed 0, skipped 0. Прошли `legacyFactoryBuffersMatchTheD0Hashes`, `d2AndBundledBuffersMatchBaseline`, `offlineRenderBitIdenticalToBaseline`. Прогон тестов ~142 с.
+Метрики: таблица pLUFS по китам — AD-6 (TQ-1), громкости пока стартовые. Порог RMS хвоста комнаты после сухого удара снижен до > 0.001: прогон до highpass дал 0.001274 при старом пороге 0.002. Центроидные пороги T-VEL-7 на конструкторе пресета не менялись; на фабричных китах ещё не сняты.
+Бюджеты: T-PERF-1…3 не измерялись. Слои 4, round-robin 2. Новых wav нет. Различимость библиотеки одна занимает ~97 с, потому что `samples()` рендерит все 96 динамических превью.
+Что слушать: 10 кики Rock / Funk / Jazz; 11 малый center/rim/cross-stick и ghost в Funk Tight; 12 хэт closed/open/pedal и choke; 16 щётки tap/swirl/slap; 17 конга, кахон, тимбалес, треугольник; 21 Studio Dry сухой, Rock Big Room и Orchestral с комнатой без Reverb. WAV пунктов 6–7 ещё нет.
+Риски/долги: Real Rusty Multi и Afro/World не делались, лицензия Karoryfer не открывалась. Уровни TQ-1…TQ-6, T-LVL, T-PERF и listening WAV — AD-6. Velocity-лейн — AD-5. Превью `samples()` и слой банка у v=0.8 не побитово равны. Хост x86_64, не Apple Silicon. Шейкер в группе choke 1 обрывает предыдущий шейк.
